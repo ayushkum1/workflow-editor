@@ -1,0 +1,224 @@
+.canvas-container {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #f8f9fa;
+  position: relative;
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.workflow-svg {
+  display: block;
+  user-select: none;
+}
+
+.zoom-capsule {
+  position: absolute;
+  bottom: 30px;
+  right: 30px;
+  display: flex;
+  align-items: center;
+  background: white;
+  padding: 5px 15px;
+  border-radius: 50px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  border: 1px solid #ddd;
+  z-index: 100;
+
+  button {
+    background: none;
+    border: none;
+    font-size: 18px;
+    font-weight: bold;
+    color: #555;
+    cursor: pointer;
+    padding: 5px 10px;
+    transition: color 0.2s;
+
+    &:hover {
+      color: #007bff;
+    }
+  }
+
+  .zoom-text {
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #888;
+    min-width: 40px;
+    text-align: center;
+  }
+
+  .separator {
+    width: 1px;
+    height: 18px;
+    background: #eee;
+    margin: 0 5px;
+  }
+
+  .reset-btn {
+    font-size: 16px;
+  }
+}
+.palette {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 120px;
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  z-index: 101;
+
+  h3 {
+    margin-top: 0;
+    font-size: 14px;
+    color: #666;
+  }
+
+  .palette-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 15px;
+    cursor: pointer;
+    padding: 10px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+
+    &:hover {
+      background: #f0f7ff;
+      border-color: #d0e5ff;
+    }
+
+    .shape {
+      width: 40px;
+      height: 25px;
+      margin-bottom: 5px;
+    }
+    .state-rect {
+      background: #e3f2fd;
+      border: 2px solid #1976d2;
+      border-radius: 4px;
+    }
+    .junction-circle {
+      width: 20px;
+      height: 20px;
+      background: #333;
+      border-radius: 50%;
+    }
+    span {
+      font-size: 11px;
+      color: #444;
+    }
+  }
+}
+.node-group {
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &.dragging {
+    opacity: 0.8;
+    rect {
+      filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.2));
+    }
+  }
+}
+.port-dot {
+  fill: #1976d2;
+  opacity: 0; // Hide them completely unless node is hovered
+  pointer-events: none;
+}
+
+.port-hit-area {
+  fill: transparent;
+  cursor: crosshair;
+  pointer-events: all;
+
+  // When hovering the hit area, make the dot "pop"
+  &:hover + .port-dot {
+    opacity: 1;
+    r: 8; // Scale up the dot visually
+    fill: #ff9800; // Change color to orange for "magnetic" feedback
+  }
+}
+.node-group:hover .port-dot {
+  opacity: 0.3; // Faint hint on hover
+}
+// Ensure lines don't block mouse events
+path,
+line {
+  pointer-events: none;
+}
+.edge-group {
+  cursor: pointer;
+
+  .edge-click-area:hover + path {
+    stroke: #ff5252; // Highlight red on hover
+  }
+}
+
+.edge-label-input {
+  width: 100%;
+  border: none;
+  background: white;
+  font-size: 10px;
+  text-align: center;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  outline: none;
+
+  &:focus {
+    border: 1px solid #1976d2;
+  }
+}
+
+.edge-group {
+  cursor: pointer;
+
+  .edge-line {
+    stroke: #555;
+    stroke-width: 2;
+    fill: none;
+    transition: stroke 0.2s, stroke-width 0.2s;
+  }
+
+  .edge-hit-area {
+    stroke: transparent;
+    stroke-width: 15; // Makes the edge very easy to click
+    fill: none;
+  }
+
+  // Hover Effect
+  &:hover .edge-line {
+    stroke: #1976d2;
+    stroke-width: 3;
+  }
+
+  // Selection Effect
+  &.selected .edge-line {
+    stroke: #ff9800;
+    stroke-width: 3;
+  }
+
+  .label-bg {
+    fill: white;
+    stroke: #e0e0e0;
+    pointer-events: none;
+  }
+
+  .edge-label-text {
+    font-size: 10px;
+    font-family: Arial;
+    fill: #333;
+    pointer-events: none;
+    user-select: none;
+  }
+}

@@ -1,0 +1,186 @@
+<div
+  class="canvas-container"
+  (wheel)="onWheel($event)"
+  (mousedown)="onMouseDown($event)"
+  (mousemove)="onMouseMove($event)"
+  (mouseup)="onMouseUp()"
+  (contextmenu)="$event.preventDefault()"
+>
+  <svg #svgRef width="100%" height="100%" class="workflow-svg">
+    <defs>
+      <pattern
+        id="grid"
+        [attr.width]="50 * coord.scale"
+        [attr.height]="50 * coord.scale"
+        patternUnits="userSpaceOnUse"
+      >
+        <path
+          [attr.d]="'M ' + 50 * coord.scale + ' 0 L 0 0 0 ' + 50 * coord.scale"
+          fill="none"
+          stroke="#e0e0e0"
+          stroke-width="1"
+        />
+      </pattern>
+
+      <marker
+        id="arrowhead"
+        viewBox="0 0 10 10"
+        refX="10"
+        refY="5"
+        markerWidth="6"
+        markerHeight="6"
+        orient="auto"
+      >
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#555" />
+      </marker>
+    </defs>
+
+    <g
+      [attr.transform]="
+        'translate(' +
+        coord.translateX +
+        ',' +
+        coord.translateY +
+        ') scale(' +
+        coord.scale +
+        ')'
+      "
+    >
+      <rect
+        x="-50000"
+        y="-50000"
+        width="100000"
+        height="100000"
+        fill="url(#grid)"
+      />
+
+      <g *ngFor="let edge of edges" class="edge-group">
+        <path
+          [attr.d]="getEdgePath(edge)"
+          stroke="#555"
+          stroke-width="2"
+          fill="none"
+          marker-end="url(#arrowhead)"
+        />
+
+        <path
+          [attr.d]="getEdgePath(edge)"
+          stroke="transparent"
+          stroke-width="10"
+          fill="none"
+          style="cursor: pointer"
+          (contextmenu)="deleteEdge(edge.id, $event)"
+        />
+
+        <foreignObject
+          *ngIf="getEdgeLabelPos(edge) as pos"
+          [attr.x]="pos.x - 40"
+          [attr.y]="pos.y - 12"
+          width="80"
+          height="24"
+        >
+          <div xmlns="http://www.w3.org/1999/xhtml">
+            <input
+              type="text"
+              class="edge-label-input"
+              [(ngModel)]="edge.eventName"
+              (mousedown)="$event.stopPropagation()"
+              placeholder="Event..."
+            />
+          </div>
+        </foreignObject>
+      </g>
+
+      <g
+        *ngFor="let node of nodes"
+        (mousedown)="onNodeMouseDown(node, $event)"
+        class="node-group"
+        [class.dragging]="node.isDragging"
+      >
+        <rect
+          *ngIf="node.type === 'STATE'"
+          [attr.x]="node.x"
+          [attr.y]="node.y"
+          width="120"
+          height="60"
+          rx="8"
+          [attr.fill]="node.color"
+          stroke="#1976d2"
+          stroke-width="2"
+        />
+
+        <circle
+          *ngIf="node.type === 'JUNCTION'"
+          [attr.cx]="node.x + 15"
+          [attr.cy]="node.y + 15"
+          r="15"
+          [attr.fill]="node.color"
+        />
+
+        <text
+          *ngIf="node.type === 'STATE'"
+          [attr.x]="node.x + 60"
+          [attr.y]="node.y + 35"
+          text-anchor="middle"
+          font-size="12"
+          font-family="Arial"
+          style="pointer-events: none; user-select: none"
+        >
+          {{ node.label }}
+        </text>
+
+        <g *ngIf="node.type === 'STATE'">
+          <ng-container *ngFor="let offset of PORT_OFFSETS; let i = index">
+            <circle
+              class="port-hit-area"
+              [attr.cx]="node.x + offset.x"
+              [attr.cy]="node.y + offset.y"
+              r="12"
+              (mousedown)="startDrawingEdge(node, i, $event)"
+              (mouseup)="completeEdge(node, i, $event)"
+            />
+            <circle
+              class="port-dot"
+              [attr.cx]="node.x + offset.x"
+              [attr.cy]="node.y + offset.y"
+              r="4"
+            />
+          </ng-container>
+        </g>
+      </g>
+
+      <line
+        *ngIf="tempEdge"
+        [attr.x1]="tempEdge.x1"
+        [attr.y1]="tempEdge.y1"
+        [attr.x2]="tempEdge.x2"
+        [attr.y2]="tempEdge.y2"
+        stroke="#1976d2"
+        stroke-width="1.5"
+        stroke-dasharray="4,4"
+      />
+    </g>
+  </svg>
+
+  <div class="palette">
+    <h3>Palette</h3>
+    <div class="palette-item" (click)="addNode('STATE')">
+      <div class="shape state-rect"></div>
+      <span>State</span>
+    </div>
+    <div class="palette-item" (click)="addNode('JUNCTION')">
+      <div class="shape junction-circle"></div>
+      <span>Junction</span>
+    </div>
+  </div>
+
+  <div class="zoom-capsule">
+    <button (click)="coord.zoomIn()">+</button>
+    <div class="separator"></div>
+    <span class="zoom-text">{{ coord.scale * 100 | number : "1.0-0" }}%</span>
+    <div class="separator"></div>
+    <button (click)="coord.zoomOut()">−</button>
+    <div class="separator"></div>
+    <button (click)="coord.resetZoom()">⟲</button>
+  </div>
+</div>
