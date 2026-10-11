@@ -1,186 +1,609 @@
-<div
-  class="canvas-container"
-  (wheel)="onWheel($event)"
-  (mousedown)="onMouseDown($event)"
-  (mousemove)="onMouseMove($event)"
-  (mouseup)="onMouseUp()"
-  (contextmenu)="$event.preventDefault()"
->
-  <svg #svgRef width="100%" height="100%" class="workflow-svg">
-    <defs>
-      <pattern
-        id="grid"
-        [attr.width]="50 * coord.scale"
-        [attr.height]="50 * coord.scale"
-        patternUnits="userSpaceOnUse"
-      >
-        <path
-          [attr.d]="'M ' + 50 * coord.scale + ' 0 L 0 0 0 ' + 50 * coord.scale"
-          fill="none"
-          stroke="#e0e0e0"
-          stroke-width="1"
-        />
-      </pattern>
-
-      <marker
-        id="arrowhead"
-        viewBox="0 0 10 10"
-        refX="10"
-        refY="5"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto"
-      >
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="#555" />
-      </marker>
-    </defs>
-
-    <g
-      [attr.transform]="
-        'translate(' +
-        coord.translateX +
-        ',' +
-        coord.translateY +
-        ') scale(' +
-        coord.scale +
-        ')'
-      "
+<div class="editor-layout" [class.is-resizing]="isResizingPalette || isResizingInspector">
+  <!-- CENTER: Workflow Canvas Area (Full width giving maximum area) -->
+  <main
+    class="canvas-area"
+    (wheel)="onWheel($event)"
+    (mousedown)="onMouseDown($event)"
+    (mousemove)="onMouseMove($event)"
+    (mouseup)="onMouseUp()"
+    (contextmenu)="$event.preventDefault()"
+    (dragover)="onDragOver($event)"
+    (drop)="onDrop($event)"
+  >
+    <!-- FLOATING PALETTE OVERLAY (Minimal, adaptive, on graph canvas) -->
+    <div
+      class="floating-palette"
+      [class.collapsed]="isPaletteCollapsed"
+      [style.width.px]="isPaletteCollapsed ? null : paletteWidth"
+      (mousedown)="$event.stopPropagation()"
     >
-      <rect
-        x="-50000"
-        y="-50000"
-        width="100000"
-        height="100000"
-        fill="url(#grid)"
-      />
-
-      <g *ngFor="let edge of edges" class="edge-group">
-        <path
-          [attr.d]="getEdgePath(edge)"
-          stroke="#555"
-          stroke-width="2"
-          fill="none"
-          marker-end="url(#arrowhead)"
-        />
-
-        <path
-          [attr.d]="getEdgePath(edge)"
-          stroke="transparent"
-          stroke-width="10"
-          fill="none"
-          style="cursor: pointer"
-          (contextmenu)="deleteEdge(edge.id, $event)"
-        />
-
-        <foreignObject
-          *ngIf="getEdgeLabelPos(edge) as pos"
-          [attr.x]="pos.x - 40"
-          [attr.y]="pos.y - 12"
-          width="80"
-          height="24"
+      <!-- Minimal Floater Header -->
+      <div class="floater-header">
+        <span class="floater-title">
+          <span class="icon">🎨</span> States
+        </span>
+        <button
+          class="floater-toggle-btn"
+          (click)="togglePalette()"
+          [title]="isPaletteCollapsed ? 'Expand States' : 'Minimize States'"
         >
-          <div xmlns="http://www.w3.org/1999/xhtml">
-            <input
-              type="text"
-              class="edge-label-input"
-              [(ngModel)]="edge.eventName"
-              (mousedown)="$event.stopPropagation()"
-              placeholder="Event..."
-            />
-          </div>
-        </foreignObject>
-      </g>
+          {{ isPaletteCollapsed ? '▶' : '−' }}
+        </button>
+      </div>
 
+      <!-- Adaptive Responsive Grid of Shapes -->
+      <div class="floater-items-grid" *ngIf="!isPaletteCollapsed">
+        <div
+          *ngFor="let item of paletteShapes"
+          class="palette-node-pill"
+          [attr.data-type]="item.type"
+          draggable="true"
+          (dragstart)="onDragStart($event, item.type)"
+          (click)="addNode(item.type)"
+          [title]="'Add ' + item.label + ' (drag or click)'"
+        >
+          <span class="pill-dot"></span>
+          <span class="pill-label">{{ item.label }}</span>
+        </div>
+      </div>
+
+      <!-- Width resize handle on right edge of floater -->
+      <div
+        class="floater-resize-handle"
+        *ngIf="!isPaletteCollapsed"
+        (mousedown)="startResizePalette($event)"
+        title="Drag to resize palette width"
+      ></div>
+    </div>
+
+    <!-- Floating Expand Button for Right Inspector -->
+    <button
+      *ngIf="isInspectorCollapsed"
+      class="panel-floating-btn toggle-right"
+      (click)="toggleInspector()"
+      title="Expand Inspector"
+    >
+      ◀
+    </button>
+
+    <svg #svgRef width="100%" height="100%" class="workflow-svg">
+      <defs>
+        <!-- Canvas Grid Pattern -->
+        <pattern
+          id="grid"
+          [attr.width]="50 * coord.scale"
+          [attr.height]="50 * coord.scale"
+          patternUnits="userSpaceOnUse"
+        >
+          <path
+            [attr.d]="'M ' + 50 * coord.scale + ' 0 L 0 0 0 ' + 50 * coord.scale"
+            fill="none"
+            stroke="#e2e8f0"
+            stroke-width="1"
+          />
+        </pattern>
+
+        <!-- Standard Arrowhead -->
+        <marker
+          id="arrowhead"
+          viewBox="0 0 10 10"
+          refX="10"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+        </marker>
+
+        <!-- Selected Arrowhead -->
+        <marker
+          id="arrowhead-selected"
+          viewBox="0 0 10 10"
+          refX="10"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#6366f1" />
+        </marker>
+      </defs>
+
+      <!-- Zoom/Pan Viewport Group -->
       <g
-        *ngFor="let node of nodes"
-        (mousedown)="onNodeMouseDown(node, $event)"
-        class="node-group"
-        [class.dragging]="node.isDragging"
+        [attr.transform]="
+          'translate(' +
+          coord.translateX +
+          ',' +
+          coord.translateY +
+          ') scale(' +
+          coord.scale +
+          ')'
+        "
       >
+        <!-- Infinite Grid Background -->
         <rect
-          *ngIf="node.type === 'STATE'"
-          [attr.x]="node.x"
-          [attr.y]="node.y"
-          width="120"
-          height="60"
-          rx="8"
-          [attr.fill]="node.color"
-          stroke="#1976d2"
-          stroke-width="2"
+          x="-50000"
+          y="-50000"
+          width="100000"
+          height="100000"
+          fill="url(#grid)"
         />
 
-        <circle
-          *ngIf="node.type === 'JUNCTION'"
-          [attr.cx]="node.x + 15"
-          [attr.cy]="node.y + 15"
-          r="15"
-          [attr.fill]="node.color"
+        <!-- Marquee / Section Selection Box -->
+        <rect
+          *ngIf="isMarqueeSelecting && marqueeRect"
+          [attr.x]="marqueeRect.x"
+          [attr.y]="marqueeRect.y"
+          [attr.width]="marqueeRect.width"
+          [attr.height]="marqueeRect.height"
+          class="marquee-box"
         />
 
-        <text
-          *ngIf="node.type === 'STATE'"
-          [attr.x]="node.x + 60"
-          [attr.y]="node.y + 35"
-          text-anchor="middle"
-          font-size="12"
-          font-family="Arial"
-          style="pointer-events: none; user-select: none"
+        <!-- EDGES (Transitions) -->
+        <g
+          *ngFor="let edge of edges"
+          class="edge-group"
+          [class.selected]="selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id)"
         >
-          {{ node.label }}
-        </text>
+          <!-- Core visible line -->
+          <path
+            class="edge-line"
+            fill="none"
+            [attr.d]="getEdgePath(edge)"
+            [attr.marker-end]="(selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id)) ? 'url(#arrowhead-selected)' : 'url(#arrowhead)'"
+          />
 
-        <g *ngIf="node.type === 'STATE'">
-          <ng-container *ngFor="let offset of PORT_OFFSETS; let i = index">
-            <circle
-              class="port-hit-area"
-              [attr.cx]="node.x + offset.x"
-              [attr.cy]="node.y + offset.y"
-              r="12"
-              (mousedown)="startDrawingEdge(node, i, $event)"
-              (mouseup)="completeEdge(node, i, $event)"
-            />
-            <circle
-              class="port-dot"
-              [attr.cx]="node.x + offset.x"
-              [attr.cy]="node.y + offset.y"
-              r="4"
-            />
-          </ng-container>
+          <!-- Thick invisible click/hit area -->
+          <path
+            class="edge-hit-area"
+            fill="none"
+            [attr.d]="getEdgePath(edge)"
+            (mousedown)="onEdgeMouseDown(edge, $event)"
+            (click)="selectEdge(edge, $event)"
+            (contextmenu)="deleteEdge(edge.id, $event)"
+          />
+
+          <!-- Edge Event Name Card: In the exact middle of the edge path, vertical if along Y-axis -->
+          <g
+            *ngIf="getEdgeLabelInfo(edge) as info"
+            class="edge-label-group"
+            [class.vertical]="info.isVertical"
+            (mousedown)="onEdgeMouseDown(edge, $event)"
+            (click)="selectEdge(edge, $event)"
+          >
+            <ng-container *ngIf="selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id) || (edge.eventName && edge.eventName.trim() !== '')">
+              <!-- Horizontal Pill -->
+              <ng-container *ngIf="!info.isVertical">
+                <rect
+                  [attr.x]="info.x - 45"
+                  [attr.y]="info.y - 12"
+                  width="90"
+                  height="24"
+                  rx="12"
+                  class="edge-label-bg"
+                />
+                <text
+                  [attr.x]="info.x"
+                  [attr.y]="info.y + 4"
+                  text-anchor="middle"
+                  class="edge-label-text"
+                >
+                  {{ edge.eventName || 'Add Event...' }}
+                </text>
+              </ng-container>
+
+              <!-- Vertical Pill -->
+              <ng-container *ngIf="info.isVertical">
+                <rect
+                  [attr.x]="info.x - 12"
+                  [attr.y]="info.y - 45"
+                  width="24"
+                  height="90"
+                  rx="12"
+                  class="edge-label-bg"
+                />
+                <text
+                  [attr.x]="info.x"
+                  [attr.y]="info.y + 4"
+                  text-anchor="middle"
+                  class="edge-label-text vertical-text"
+                  [attr.transform]="'rotate(90, ' + info.x + ', ' + info.y + ')'"
+                >
+                  {{ edge.eventName || 'Add Event...' }}
+                </text>
+              </ng-container>
+            </ng-container>
+          </g>
         </g>
+
+        <!-- NODES (Shapes) -->
+        <g
+          *ngFor="let node of nodes"
+          (mousedown)="onNodeMouseDown(node, $event)"
+          (dblclick)="startInlineEdit(node, $event)"
+          class="node-group"
+          [class.selected]="selectedNode?.id === node.id || selectedNodeIds.has(node.id)"
+          [class.dragging]="node.isDragging"
+        >
+          <!-- Resizable Rect -->
+          <rect
+            [attr.x]="node.x"
+            [attr.y]="node.y"
+            [attr.width]="node.width || 120"
+            [attr.height]="node.height || 60"
+            rx="8"
+            ry="8"
+            [attr.fill]="node.color"
+            class="shape-element"
+            [class.shape-state]="node.type === 'STATE'"
+            [class.shape-failed]="node.type === 'FAILED_STATE'"
+            [class.shape-junction]="node.type === 'JUNCTION'"
+            [class.shape-decision]="node.type === 'DECISION'"
+            [class.shape-fork]="node.type === 'FORK'"
+            [class.shape-join]="node.type === 'JOIN'"
+            [class.shape-start]="node.type === 'START'"
+            [class.shape-end]="node.type === 'END'"
+          />
+          
+          <!-- Double click inline text editor or regular text display -->
+          <foreignObject
+            *ngIf="editingNodeId === node.id"
+            [attr.x]="node.x + 8"
+            [attr.y]="node.y + (node.height || 60) / 2 - 14"
+            [attr.width]="(node.width || 120) - 16"
+            height="28"
+          >
+            <input
+              [id]="'inline-edit-' + node.id"
+              type="text"
+              class="node-inline-input"
+              [(ngModel)]="editingLabel"
+              (blur)="saveInlineEdit(node)"
+              (keydown.enter)="saveInlineEdit(node)"
+              (keydown.escape)="cancelInlineEdit()"
+              (mousedown)="$event.stopPropagation()"
+            />
+          </foreignObject>
+
+          <text
+            *ngIf="editingNodeId !== node.id"
+            [attr.x]="node.x + (node.width || 120) / 2"
+            [attr.y]="node.y + (node.height || 60) / 2 + 4"
+            text-anchor="middle"
+            class="node-label"
+          >
+            {{ node.label }}
+          </text>
+
+          <!-- Node Resize Handle (Bottom-Right) -->
+          <rect
+            *ngIf="selectedNode?.id === node.id || selectedNodeIds.has(node.id)"
+            class="node-resize-handle"
+            [attr.x]="node.x + (node.width || 120) - 8"
+            [attr.y]="node.y + (node.height || 60) - 8"
+            width="8"
+            height="8"
+            (mousedown)="startResizeNode(node, $event)"
+          />
+
+          <!-- PORTS Group (Rendered for hovered nodes) -->
+          <g class="ports-group">
+            <ng-container *ngFor="let offset of getPortOffsets(node); let i = index">
+              <!-- Broad mouse hit area for connection creation -->
+              <circle
+                class="port-hit-area"
+                [attr.cx]="node.x + offset.x"
+                [attr.cy]="node.y + offset.y"
+                r="10"
+                (mousedown)="startDrawingEdge(node, i, $event)"
+                (mouseup)="completeEdge(node, i, $event)"
+              />
+              <!-- Tiny visual marker point -->
+              <circle
+                class="port-dot"
+                [attr.cx]="node.x + offset.x"
+                [attr.cy]="node.y + offset.y"
+                r="4"
+              />
+            </ng-container>
+          </g>
+        </g>
+
+        <!-- Temporary dynamic line while drawing -->
+        <line
+          *ngIf="tempEdge"
+          [attr.x1]="tempEdge.x1"
+          [attr.y1]="tempEdge.y1"
+          [attr.x2]="tempEdge.x2"
+          [attr.y2]="tempEdge.y2"
+          class="drawing-temp-line"
+        />
       </g>
+    </svg>
 
-      <line
-        *ngIf="tempEdge"
-        [attr.x1]="tempEdge.x1"
-        [attr.y1]="tempEdge.y1"
-        [attr.x2]="tempEdge.x2"
-        [attr.y2]="tempEdge.y2"
-        stroke="#1976d2"
-        stroke-width="1.5"
-        stroke-dasharray="4,4"
-      />
-    </g>
-  </svg>
+    <!-- Floating Zoom Controls & Mode Switcher -->
+    <div class="zoom-capsule">
+      <div class="mode-toggle-group">
+        <button
+          class="mode-btn"
+          [class.active]="canvasMode === 'pan'"
+          (click)="canvasMode = 'pan'"
+          title="Pan tool: click and pull canvas to move"
+        >
+          ✋ Pan
+        </button>
+        <button
+          class="mode-btn"
+          [class.active]="canvasMode === 'select'"
+          (click)="canvasMode = 'select'"
+          title="Marquee Selection tool: drag box to select (or Shift+drag)"
+        >
+          ⬚ Select
+        </button>
+      </div>
 
-  <div class="palette">
-    <h3>Palette</h3>
-    <div class="palette-item" (click)="addNode('STATE')">
-      <div class="shape state-rect"></div>
-      <span>State</span>
+      <div class="separator"></div>
+
+      <button (click)="coord.zoomIn()" title="Zoom In">+</button>
+      <div class="separator"></div>
+      <span class="zoom-text">{{ coord.scale * 100 | number : "1.0-0" }}%</span>
+      <div class="separator"></div>
+      <button (click)="coord.zoomOut()" title="Zoom Out">−</button>
+      <div class="separator"></div>
+      <button (click)="coord.resetZoom()" class="reset-btn" title="Reset View">⟲</button>
     </div>
-    <div class="palette-item" (click)="addNode('JUNCTION')">
-      <div class="shape junction-circle"></div>
-      <span>Junction</span>
-    </div>
-  </div>
+  </main>
 
-  <div class="zoom-capsule">
-    <button (click)="coord.zoomIn()">+</button>
-    <div class="separator"></div>
-    <span class="zoom-text">{{ coord.scale * 100 | number : "1.0-0" }}%</span>
-    <div class="separator"></div>
-    <button (click)="coord.zoomOut()">−</button>
-    <div class="separator"></div>
-    <button (click)="coord.resetZoom()">⟲</button>
-  </div>
+  <!-- Right Sidebar Resizer -->
+  <div
+    class="sidebar-resizer resizer-right"
+    *ngIf="!isInspectorCollapsed"
+    (mousedown)="startResizeInspector($event)"
+    title="Drag to resize inspector"
+  ></div>
+
+  <!-- RIGHT SIDEBAR: Editor & Transitions Inspector -->
+  <aside
+    class="right-sidebar"
+    [style.width.px]="isInspectorCollapsed ? 0 : inspectorWidth"
+    [class.collapsed]="isInspectorCollapsed"
+  >
+    <!-- Tabbed navigation header -->
+    <div class="sidebar-tabs" *ngIf="!isInspectorCollapsed">
+      <button
+        class="tab-btn"
+        [class.active]="activeTab === 'properties'"
+        (click)="activeTab = 'properties'"
+      >
+        Properties
+      </button>
+      <button
+        class="tab-btn"
+        [class.active]="activeTab === 'transitions'"
+        (click)="activeTab = 'transitions'"
+      >
+        Transitions
+      </button>
+      <button class="collapse-icon-btn" (click)="toggleInspector()" title="Collapse Inspector">▶</button>
+    </div>
+
+    <!-- PROPERTIES TAB -->
+    <div class="tab-content" *ngIf="!isInspectorCollapsed && activeTab === 'properties'">
+      <!-- MULTI-SELECTION SUMMARY -->
+      <div class="inspector-card multi-select-card" *ngIf="selectedNodeIds.size > 1">
+        <div class="card-header">
+          <h3>Multiple Selection</h3>
+          <span class="badge">{{ selectedNodeIds.size }} Nodes</span>
+        </div>
+        <p class="multi-select-desc">
+          {{ selectedNodeIds.size }} nodes selected. You can drag them together, or press Delete/Backspace to remove them and their connecting edges.
+        </p>
+        <div class="action-footer">
+          <button class="delete-btn" (click)="deleteSelection()">
+            Delete Selected Nodes
+          </button>
+        </div>
+      </div>
+
+      <!-- SINGLE NODE PROPERTIES SELECTED -->
+      <div class="inspector-card" *ngIf="selectedNode && selectedNodeIds.size <= 1">
+        <div class="card-header">
+          <h3>Node Properties</h3>
+          <span class="badge" [attr.data-type]="selectedNode.type">{{ selectedNode.type }}</span>
+        </div>
+
+        <div class="form-group">
+          <label>ID</label>
+          <input type="text" [value]="selectedNode.id" disabled class="disabled-input" />
+        </div>
+
+        <!-- Node Type Selector Dropdown -->
+        <div class="form-group">
+          <label>State Type</label>
+          <select [(ngModel)]="selectedNode.type" (change)="onNodeTypeChange(selectedNode)">
+            <option value="STATE">State (Normal)</option>
+            <option value="FAILED_STATE">Failed State</option>
+            <option value="JUNCTION">Junction</option>
+            <option value="DECISION">Decision</option>
+            <option value="FORK">Fork</option>
+            <option value="JOIN">Join</option>
+            <option value="START">Start</option>
+            <option value="END">End</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Label (Double click node on canvas to edit inline)</label>
+          <input type="text" [(ngModel)]="selectedNode.label" placeholder="Enter node label..." />
+        </div>
+
+        <!-- Dimensions -->
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Width (px)</label>
+            <input type="number" [(ngModel)]="selectedNode.width" min="80" step="10" />
+          </div>
+          <div class="form-group">
+            <label>Height (px)</label>
+            <input type="number" [(ngModel)]="selectedNode.height" min="40" step="10" />
+          </div>
+        </div>
+
+        <!-- Color presets -->
+        <div class="form-group">
+          <label>Theme Color</label>
+          <div class="color-picker-presets">
+            <button
+              *ngFor="let col of ['#e3f2fd', '#fee2e2', '#f1f5f9', '#fffbeb', '#f3e8ff', '#ecfdf5', '#ffedd5']"
+              [style.background-color]="col"
+              class="color-preset-dot"
+              [class.active]="selectedNode.color === col"
+              (click)="selectedNode.color = col"
+            ></button>
+          </div>
+          <input type="text" [(ngModel)]="selectedNode.color" class="hex-color-input" placeholder="#ffffff" />
+        </div>
+
+        <div class="action-footer">
+          <button class="delete-btn" (click)="deleteNode(selectedNode.id)">
+            Delete Node
+          </button>
+        </div>
+      </div>
+
+      <!-- MULTI-EDGE SELECTION SUMMARY -->
+      <div class="inspector-card multi-select-card" *ngIf="selectedEdgeIds.size > 1 && selectedNodeIds.size === 0">
+        <div class="card-header">
+          <h3>Multiple Transitions</h3>
+          <span class="badge">{{ selectedEdgeIds.size }} Edges</span>
+        </div>
+        <p class="multi-select-desc">
+          {{ selectedEdgeIds.size }} transitions selected. Press Delete or Backspace to remove them.
+        </p>
+        <div class="action-footer">
+          <button class="delete-btn" (click)="deleteSelection()">
+            Delete Selected Transitions
+          </button>
+        </div>
+      </div>
+
+      <!-- EDGE PROPERTIES SELECTED -->
+      <div class="inspector-card" *ngIf="selectedEdge && selectedEdgeIds.size <= 1 && selectedNodeIds.size === 0">
+        <div class="card-header">
+          <h3>Transition #{{ selectedEdge.id }}</h3>
+          <span class="badge badge-edge">Edge</span>
+        </div>
+
+        <div class="form-group">
+          <label>From State (Source)</label>
+          <div class="read-only-state-box">
+            <span class="badge" [attr.data-type]="getNodeType(selectedEdge.sourceNodeId)">{{ getNodeType(selectedEdge.sourceNodeId) }}</span>
+            <span class="state-name">{{ getNodeLabel(selectedEdge.sourceNodeId) }}</span>
+            <span class="state-id">(ID: {{ selectedEdge.sourceNodeId }})</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>To State (Target)</label>
+          <div class="read-only-state-box">
+            <span class="badge" [attr.data-type]="getNodeType(selectedEdge.targetNodeId)">{{ getNodeType(selectedEdge.targetNodeId) }}</span>
+            <span class="state-name">{{ getNodeLabel(selectedEdge.targetNodeId) }}</span>
+            <span class="state-id">(ID: {{ selectedEdge.targetNodeId }})</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Event Trigger (Name)</label>
+          <input type="text" [(ngModel)]="selectedEdge.eventName" placeholder="e.g. GUARD, RETRY, ON_CLICK" />
+        </div>
+
+        <!-- TRANSITION GUARDS -->
+        <div class="metadata-section">
+          <h4>Transition Guards</h4>
+          <div class="metadata-list">
+            <div class="metadata-chip" *ngFor="let gd of selectedEdge.guards; let idx = index">
+              <span>{{ gd }}</span>
+              <button class="remove-chip-btn" (click)="removeEdgeGuard(selectedEdge, idx)">&times;</button>
+            </div>
+          </div>
+          <div class="chip-input-group">
+            <input type="text" placeholder="Add guard..." [(ngModel)]="newGuardName" (keyup.enter)="addEdgeGuard(selectedEdge)" />
+            <button class="add-chip-btn" (click)="addEdgeGuard(selectedEdge)">+</button>
+          </div>
+        </div>
+
+        <!-- TRANSITION ACTIONS -->
+        <div class="metadata-section">
+          <h4>Transition Actions</h4>
+          <div class="metadata-list">
+            <div class="metadata-chip" *ngFor="let act of selectedEdge.actions; let idx = index">
+              <span>{{ act }}</span>
+              <button class="remove-chip-btn" (click)="removeEdgeAction(selectedEdge, idx)">&times;</button>
+            </div>
+          </div>
+          <div class="chip-input-group">
+            <input type="text" placeholder="Add action..." [(ngModel)]="newActionName" (keyup.enter)="addEdgeAction(selectedEdge)" />
+            <button class="add-chip-btn" (click)="addEdgeAction(selectedEdge)">+</button>
+          </div>
+        </div>
+
+        <div class="action-footer">
+          <button class="delete-btn" (click)="deleteEdge(selectedEdge.id, $event)">
+            Delete Transition
+          </button>
+        </div>
+      </div>
+
+      <!-- EMPTY STATE (NOTHING SELECTED) -->
+      <div class="empty-inspector" *ngIf="!selectedNode && !selectedEdge && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0">
+        <div class="empty-icon">🖱️</div>
+        <h3>No Selection</h3>
+        <p>Select any node or connecting transition on the canvas to edit its properties.</p>
+      </div>
+    </div>
+
+    <!-- TRANSITIONS TAB -->
+    <div class="tab-content scrollable" *ngIf="!isInspectorCollapsed && activeTab === 'transitions'">
+      <!-- Active Transitions List -->
+      <div class="transitions-list-card">
+        <h3>Active Transitions</h3>
+        <div class="transitions-scroll-area">
+          <div class="transition-item" *ngFor="let ed of edges" [class.active]="selectedEdge?.id === ed.id" (click)="selectedEdge = ed; selectedNode = null; selectedNodeIds.clear()">
+            <div class="transition-route">
+              <span class="node-badge" [attr.data-type]="getNodeType(ed.sourceNodeId)">{{ getNodeLabel(ed.sourceNodeId) }}</span>
+              <span class="arrow-indicator">➔</span>
+              <span class="node-badge" [attr.data-type]="getNodeType(ed.targetNodeId)">{{ getNodeLabel(ed.targetNodeId) }}</span>
+            </div>
+            <div class="transition-meta">
+              <span class="event-name">{{ ed.eventName || '(No event)' }}</span>
+              <span class="guard-condition" *ngFor="let g of ed.guards">[{{ g }}]</span>
+              <span class="action-condition" *ngFor="let a of ed.actions">/ {{ a }}</span>
+            </div>
+            <button class="item-delete-btn" (click)="deleteEdge(ed.id, $event)" title="Delete Transition">&times;</button>
+          </div>
+          <div class="empty-transitions" *ngIf="edges.length === 0">
+            <p>No transitions drawn. Drag a port connection to create one.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Import/Export State -->
+      <div class="data-sync-card">
+        <h3>Workspace JSON</h3>
+        <p class="sync-desc">Backup your workflow or import an existing configuration.</p>
+        <textarea
+          class="json-textarea"
+          [(ngModel)]="importExportText"
+          placeholder='{"nodes": [...], "edges": [...]}'
+        ></textarea>
+        <div class="sync-actions">
+          <button class="sync-btn export-btn" (click)="exportWorkflow()">Export</button>
+          <button class="sync-btn import-btn" (click)="importWorkflow()">Import</button>
+        </div>
+        <button class="reset-canvas-btn" (click)="clearCanvas()">Clear Canvas</button>
+      </div>
+    </div>
+  </aside>
 </div>
