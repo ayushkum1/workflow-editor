@@ -1,8 +1,10 @@
 import { Component, ElementRef, HostListener, ViewChild } from '@angular/core';
 import { CoordinateService } from '../../services/coordinate.service';
 import {
+  EdgeLineStyle,
   ExportedWorkflow,
   NodeType,
+  WorkflowContainer,
   WorkflowEdge,
   WorkflowNode,
 } from 'src/app/model/workflow.model';
@@ -15,6 +17,8 @@ import {
 export class CanvasComponent {
   @ViewChild('svgRef') svgRef!: ElementRef<SVGSVGElement>;
 
+  Math = Math;
+
   // Panning & interaction
   isPanning = false;
   hasMovedDuringPan = false;
@@ -24,21 +28,36 @@ export class CanvasComponent {
   // Data
   nodes: WorkflowNode[] = [];
   edges: WorkflowEdge[] = [];
+  containers: WorkflowContainer[] = [];
 
   // Dragging & Moving
   draggedNode: WorkflowNode | null = null;
   dragOffset = { x: 0, y: 0 };
   draggedNodesStart = new Map<number | string, { x: number; y: number }>();
 
+  // Containers / Groups (#4: Shape drawer)
+  selectedContainer: WorkflowContainer | null = null;
+  draggedContainer: WorkflowContainer | null = null;
+  containerDragOffset = { x: 0, y: 0 };
+  containerEnclosedNodesStart = new Map<number | string, { x: number; y: number }>();
+  resizingContainer: WorkflowContainer | null = null;
+  containerResizeStart = { mouseX: 0, mouseY: 0, width: 280, height: 200 };
+  isDrawingContainer = false;
+  containerDrawStart = { x: 0, y: 0 };
+  containerDrawRect: { x: number; y: number; width: number; height: number } | null = null;
+  editingContainerId: number | string | null = null;
+  editingContainerLabel: string = '';
+
   // Edge drawing
   tempEdge: { x1: number; y1: number; x2: number; y2: number } | null = null;
   drawingSource: { nodeId: number | string; portIndex: number } | null = null;
 
-  // Selection states
+  // Selection & Hover states
   selectedNode: WorkflowNode | null = null;
   selectedNodeIds = new Set<number | string>();
   selectedEdge: WorkflowEdge | null = null;
   selectedEdgeIds = new Set<number | string>();
+  hoveredNodeId: number | string | null = null;
 
   // Marquee / Box Selection
   isMarqueeSelecting = false;
@@ -51,7 +70,13 @@ export class CanvasComponent {
 
   // Node resizing
   resizingNode: WorkflowNode | null = null;
-  nodeResizeStart = { mouseX: 0, mouseY: 0, width: 120, height: 60 };
+  nodeResizeStart = { mouseX: 0, mouseY: 0, width: 120, height: 120 };
+
+  // Movable & Resizable BPMN Text Annotation (#2, #3)
+  draggingAnnotationNode: WorkflowNode | null = null;
+  annotationDragOffset = { x: 0, y: 0 };
+  resizingAnnotationNode: WorkflowNode | null = null;
+  annotationResizeStart = { mouseX: 0, mouseY: 0, width: 155, height: 70 };
 
   // Sidebar widths & collapsing
   paletteWidth = 140;
@@ -61,19 +86,30 @@ export class CanvasComponent {
   isResizingPalette = false;
   isResizingInspector = false;
 
-  // Canvas interaction mode: 'pan' (hand tool) or 'select' (marquee selection)
-  canvasMode: 'pan' | 'select' = 'pan';
+  // Canvas interaction mode: 'pan', 'select', or 'draw-container' (#4)
+  canvasMode: 'pan' | 'select' | 'draw-container' = 'pan';
 
-  // Minimal palette shapes
+  // Minimal palette states (including Automatic, Manual, Sub-process)
   paletteShapes: { type: NodeType; label: string }[] = [
     { type: 'STATE', label: 'State' },
-    { type: 'FAILED_STATE', label: 'Failed' },
+    { type: 'AUTOMATIC', label: 'Automatic' },
+    { type: 'MANUAL', label: 'Manual' },
+    { type: 'SUB_PROCESS', label: 'Sub-process' },
     { type: 'DECISION', label: 'Decision' },
+    { type: 'FAILED_STATE', label: 'Failed' },
     { type: 'JUNCTION', label: 'Junction' },
     { type: 'FORK', label: 'Fork' },
     { type: 'JOIN', label: 'Join' },
     { type: 'START', label: 'Start' },
     { type: 'END', label: 'End' },
+  ];
+
+  // Edge line styles
+  edgeLineStyles: { style: EdgeLineStyle; label: string; preview: string }[] = [
+    { style: 'solid', label: 'Normal', preview: '───────' },
+    { style: 'dotted', label: 'Dotted', preview: '• • • • •' },
+    { style: 'dashed', label: 'Lined', preview: '─ ─ ─ ─' },
+    { style: 'dash-dot', label: 'Dot-Line', preview: '─ • ─ • ─' },
   ];
 
   // UI Tabs & sidebar states
@@ -133,6 +169,10 @@ export class CanvasComponent {
 
   // Delete all currently selected elements
   deleteSelection(): void {
+    if (this.selectedContainer) {
+      this.deleteContainer(this.selectedContainer.id);
+    }
+
     if (this.selectedNodeIds.size > 0) {
       const idsToDelete = new Set(this.selectedNodeIds);
       this.nodes = this.nodes.filter((n) => !idsToDelete.has(n.id));
@@ -155,10 +195,60 @@ export class CanvasComponent {
     }
   }
 
-  // Proportional port offsets adapting to node's width and height
+  // Default dimensions helper per node type
+  getDefaultSizeForType(type: NodeType): { width: number; height: number } {
+    if (type === 'START' || type === 'END') {
+      return { width: 80, height: 80 };
+    }
+    return { width: 120, height: 120 };
+  }
+
+  // Proportional port offsets adapting to node's shape (Circle, Rhombus, or Square/Rect)
   getPortOffsets(node: WorkflowNode) {
-    const w = node.width || 120;
-    const h = node.height || 60;
+    const defaults = this.getDefaultSizeForType(node.type);
+    const w = node.width || defaults.width;
+    const h = node.height || defaults.height;
+
+    // Circle perimeter ports for START and END
+    if (node.type === 'START' || node.type === 'END') {
+      // cos(60 deg) = 0.5, sin(60 deg) = 0.866 -> 0.5 - 0.433 = 0.067
+      const inset = 0.067;
+      const outset = 0.933;
+      return [
+        { x: w * 0.25, y: h * inset, pos: 'TOP' },
+        { x: w * 0.5, y: 0, pos: 'TOP' },
+        { x: w * 0.75, y: h * inset, pos: 'TOP' },
+        { x: w * 0.25, y: h * outset, pos: 'BOTTOM' },
+        { x: w * 0.5, y: h, pos: 'BOTTOM' },
+        { x: w * 0.75, y: h * outset, pos: 'BOTTOM' },
+        { x: w * inset, y: h * 0.25, pos: 'LEFT' },
+        { x: 0, y: h * 0.5, pos: 'LEFT' },
+        { x: w * inset, y: h * 0.75, pos: 'LEFT' },
+        { x: w * outset, y: h * 0.25, pos: 'RIGHT' },
+        { x: w, y: h * 0.5, pos: 'RIGHT' },
+        { x: w * outset, y: h * 0.75, pos: 'RIGHT' },
+      ];
+    }
+
+    // Rhombus (diamond) perimeter ports for DECISION
+    if (node.type === 'DECISION') {
+      return [
+        { x: w * 0.25, y: h * 0.25, pos: 'TOP' },
+        { x: w * 0.5, y: 0, pos: 'TOP' },
+        { x: w * 0.75, y: h * 0.25, pos: 'TOP' },
+        { x: w * 0.25, y: h * 0.75, pos: 'BOTTOM' },
+        { x: w * 0.5, y: h, pos: 'BOTTOM' },
+        { x: w * 0.75, y: h * 0.75, pos: 'BOTTOM' },
+        { x: w * 0.15, y: h * 0.35, pos: 'LEFT' },
+        { x: 0, y: h * 0.5, pos: 'LEFT' },
+        { x: w * 0.15, y: h * 0.65, pos: 'LEFT' },
+        { x: w * 0.85, y: h * 0.35, pos: 'RIGHT' },
+        { x: w, y: h * 0.5, pos: 'RIGHT' },
+        { x: w * 0.85, y: h * 0.65, pos: 'RIGHT' },
+      ];
+    }
+
+    // Standard Square / Rectangular ports
     return [
       { x: w * 0.25, y: 0, pos: 'TOP' },
       { x: w * 0.5, y: 0, pos: 'TOP' },
@@ -173,6 +263,311 @@ export class CanvasComponent {
       { x: w, y: h * 0.5, pos: 'RIGHT' },
       { x: w, y: h * 0.75, pos: 'RIGHT' },
     ];
+  }
+
+  // Polygon points string for Rhombus (Decision state)
+  getRhombusPoints(node: WorkflowNode): string {
+    const w = node.width || 120;
+    const h = node.height || 120;
+    const x = node.x;
+    const y = node.y;
+    return `${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}`;
+  }
+
+  // Check if node color is immutable (Start = Green, End = Red)
+  isColorLocked(node: WorkflowNode): boolean {
+    return node.type === 'START' || node.type === 'END';
+  }
+
+  // Format human-readable State Type label for tooltips
+  getFormattedTypeLabel(type: NodeType): string {
+    switch (type) {
+      case 'STATE':
+        return 'Standard State';
+      case 'AUTOMATIC':
+        return 'Automatic State';
+      case 'MANUAL':
+        return 'Manual State';
+      case 'SUB_PROCESS':
+        return 'Sub-Process';
+      case 'DECISION':
+        return 'Decision';
+      case 'FAILED_STATE':
+        return 'Failed State';
+      case 'JUNCTION':
+        return 'Junction';
+      case 'FORK':
+        return 'Fork';
+      case 'JOIN':
+        return 'Join';
+      case 'START':
+        return 'Start Event';
+      case 'END':
+        return 'End Event';
+      default:
+        return type;
+    }
+  }
+
+  // Quick-switch state type from floating tooltip icons
+  setNodeSubType(node: WorkflowNode, newType: NodeType, event: MouseEvent): void {
+    event.stopPropagation();
+    if (!node.originalType) {
+      node.originalType = node.type;
+    }
+    node.type = newType;
+    this.onNodeTypeChange(node);
+  }
+
+  // Reset state back to the original state type it had when created (#4)
+  resetNodeToOriginalType(node: WorkflowNode, event: MouseEvent): void {
+    event.stopPropagation();
+    if (node.originalType && node.type !== node.originalType) {
+      node.type = node.originalType;
+      this.onNodeTypeChange(node);
+    }
+  }
+
+  // Compute movable & resizable BPMN text annotation box geometry (#2)
+  getAnnotationBox(node: WorkflowNode): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    lineX1: number;
+    lineY1: number;
+    lineX2: number;
+    lineY2: number;
+  } {
+    const defaults = this.getDefaultSizeForType(node.type);
+    const nw = node.width || defaults.width;
+    const nh = node.height || defaults.height;
+    const offsetX = node.annotationOffsetX !== undefined ? node.annotationOffsetX : nw + 28;
+    const offsetY = node.annotationOffsetY !== undefined ? node.annotationOffsetY : -78;
+    const width = node.annotationWidth || 160;
+    const height = node.annotationHeight || 74;
+
+    const x = node.x + offsetX;
+    const y = node.y + offsetY;
+
+    const nodeCenterX = node.x + nw / 2;
+    const nodeCenterY = node.y + nh / 2;
+    const boxCenterY = y + height / 2;
+
+    const lineX1 = x >= nodeCenterX ? node.x + nw - 8 : node.x + 8;
+    const lineY1 = boxCenterY < nodeCenterY ? node.y + 6 : node.y + nh - 6;
+    const lineX2 = x;
+    const lineY2 = y + height / 2;
+
+    return { x, y, width, height, lineX1, lineY1, lineX2, lineY2 };
+  }
+
+  startDragAnnotation(node: WorkflowNode, event: MouseEvent): void {
+    event.stopPropagation();
+    event.preventDefault();
+    const mousePos = this.coord.screenToWorld(
+      event.clientX,
+      event.clientY,
+      this.svgRef.nativeElement
+    );
+    const box = this.getAnnotationBox(node);
+    this.draggingAnnotationNode = node;
+    this.annotationDragOffset = {
+      x: mousePos.x - box.x,
+      y: mousePos.y - box.y,
+    };
+  }
+
+  startResizeAnnotation(node: WorkflowNode, event: MouseEvent): void {
+    event.stopPropagation();
+    event.preventDefault();
+    node.showAnnotation = true;
+    const mousePos = this.coord.screenToWorld(
+      event.clientX,
+      event.clientY,
+      this.svgRef.nativeElement
+    );
+    const box = this.getAnnotationBox(node);
+    this.resizingAnnotationNode = node;
+    this.annotationResizeStart = {
+      mouseX: mousePos.x,
+      mouseY: mousePos.y,
+      width: box.width,
+      height: box.height,
+    };
+  }
+
+  // =========================================================================
+  // CONTAINER / GROUP METHODS (#4: Shape drawer)
+  // =========================================================================
+  getNextContainerId(): number {
+    if (this.containers.length === 0) return 1;
+    return (
+      Math.max(
+        ...this.containers.map((c) =>
+          typeof c.id === 'number'
+            ? c.id
+            : parseInt(String(c.id).replace(/\D/g, '')) || 0
+        )
+      ) + 1
+    );
+  }
+
+  createContainer(
+    x: number,
+    y: number,
+    width: number = 280,
+    height: number = 200,
+    label?: string
+  ): WorkflowContainer {
+    const newContainer: WorkflowContainer = {
+      id: this.getNextContainerId(),
+      x: Math.round(x / 10) * 10,
+      y: Math.round(y / 10) * 10,
+      width: Math.max(100, Math.round(width / 10) * 10),
+      height: Math.max(80, Math.round(height / 10) * 10),
+      label: label || `Group ${this.containers.length + 1}`,
+      color: 'rgba(241, 245, 249, 0.45)',
+      borderColor: '#94a3b8',
+      borderStyle: 'dashed',
+    };
+    this.containers.push(newContainer);
+    return newContainer;
+  }
+
+  selectContainer(container: WorkflowContainer, event?: MouseEvent): void {
+    if (event) event.stopPropagation();
+    this.selectedContainer = container;
+    this.selectedNode = null;
+    this.selectedNodeIds.clear();
+    this.selectedEdge = null;
+    this.selectedEdgeIds.clear();
+    this.activeTab = 'properties';
+  }
+
+  startDragContainer(container: WorkflowContainer, event: MouseEvent): void {
+    event.stopPropagation();
+    this.selectContainer(container);
+    this.draggedContainer = container;
+    const mousePos = this.coord.screenToWorld(
+      event.clientX,
+      event.clientY,
+      this.svgRef.nativeElement
+    );
+    this.containerDragOffset = {
+      x: mousePos.x - container.x,
+      y: mousePos.y - container.y,
+    };
+
+    // Find enclosed nodes to move them smoothly along with the container
+    this.containerEnclosedNodesStart.clear();
+    this.nodes.forEach((n) => {
+      const nw = n.width || 120;
+      const nh = n.height || 120;
+      const isInside =
+        n.x >= container.x - 10 &&
+        n.x + nw <= container.x + container.width + 10 &&
+        n.y >= container.y - 10 &&
+        n.y + nh <= container.y + container.height + 10;
+      if (isInside) {
+        this.containerEnclosedNodesStart.set(n.id, { x: n.x, y: n.y });
+      }
+    });
+  }
+
+  startResizeContainer(container: WorkflowContainer, event: MouseEvent): void {
+    event.stopPropagation();
+    event.preventDefault();
+    this.selectContainer(container);
+    const mousePos = this.coord.screenToWorld(
+      event.clientX,
+      event.clientY,
+      this.svgRef.nativeElement
+    );
+    this.resizingContainer = container;
+    this.containerResizeStart = {
+      mouseX: mousePos.x,
+      mouseY: mousePos.y,
+      width: container.width,
+      height: container.height,
+    };
+  }
+
+  deleteContainer(id: number | string, event?: MouseEvent): void {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    this.containers = this.containers.filter((c) => c.id !== id);
+    if (this.selectedContainer?.id === id) {
+      this.selectedContainer = null;
+    }
+  }
+
+  startInlineEditContainer(container: WorkflowContainer, event: MouseEvent): void {
+    event.stopPropagation();
+    this.editingContainerId = container.id;
+    this.editingContainerLabel = container.label;
+    setTimeout(() => {
+      const el = document.getElementById('container-inline-edit-' + container.id) as HTMLInputElement;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }, 50);
+  }
+
+  saveInlineEditContainer(container: WorkflowContainer): void {
+    if (this.editingContainerId === container.id) {
+      if (this.editingContainerLabel.trim()) {
+        container.label = this.editingContainerLabel.trim();
+      }
+      this.editingContainerId = null;
+    }
+  }
+
+  cancelInlineEditContainer(): void {
+    this.editingContainerId = null;
+  }
+
+  setCanvasMode(mode: 'pan' | 'select' | 'draw-container'): void {
+    this.canvasMode = mode;
+  }
+
+  clearWorkspaceJson(): void {
+    this.importExportText = '';
+  }
+
+  // Toggle BPMN text annotation callout on a state
+  toggleNodeAnnotation(node: WorkflowNode, event: MouseEvent): void {
+    event.stopPropagation();
+    node.showAnnotation = !node.showAnnotation;
+    if (node.showAnnotation) {
+      setTimeout(() => {
+        const el = document.getElementById('node-annotation-' + node.id) as HTMLTextAreaElement;
+        if (el) el.focus();
+      }, 50);
+    }
+  }
+
+  // Get stroke-dasharray for edge lineStyle
+  getEdgeDashArray(edge: WorkflowEdge): string | null {
+    switch (edge.lineStyle) {
+      case 'dotted':
+        return '2, 6';
+      case 'dashed':
+        return '9, 6';
+      case 'dash-dot':
+        return '10, 5, 2, 5';
+      case 'solid':
+      default:
+        return null;
+    }
+  }
+
+  setEdgeLineStyle(edge: WorkflowEdge, style: EdgeLineStyle, event?: MouseEvent): void {
+    if (event) event.stopPropagation();
+    edge.lineStyle = style;
   }
 
   // Mouse wheel interactions: zoom with Ctrl, horizontal scroll with Shift, else vertical scroll
@@ -208,6 +603,20 @@ export class CanvasComponent {
 
     // Left click on empty canvas
     if (event.button === 0) {
+      // Container Drawing Mode (#4: Shape drawer)
+      if (this.canvasMode === 'draw-container') {
+        const worldPos = this.coord.screenToWorld(
+          event.clientX,
+          event.clientY,
+          this.svgRef.nativeElement
+        );
+        this.isDrawingContainer = true;
+        this.containerDrawStart = { ...worldPos };
+        this.containerDrawRect = { x: worldPos.x, y: worldPos.y, width: 0, height: 0 };
+        this.deselectAll();
+        return;
+      }
+
       // Shift-drag or explicit select mode -> Marquee selection box
       if (event.shiftKey || this.canvasMode === 'select') {
         const worldPos = this.coord.screenToWorld(
@@ -250,12 +659,82 @@ export class CanvasComponent {
       this.svgRef.nativeElement
     );
 
+    // Live Container Drawing rubberband (#4)
+    if (this.isDrawingContainer && this.containerDrawStart) {
+      const x = Math.min(this.containerDrawStart.x, mousePos.x);
+      const y = Math.min(this.containerDrawStart.y, mousePos.y);
+      const width = Math.abs(mousePos.x - this.containerDrawStart.x);
+      const height = Math.abs(mousePos.y - this.containerDrawStart.y);
+      this.containerDrawRect = { x, y, width, height };
+      return;
+    }
+
+    // Container Resizing (#4)
+    if (this.resizingContainer) {
+      const dx = mousePos.x - this.containerResizeStart.mouseX;
+      const dy = mousePos.y - this.containerResizeStart.mouseY;
+      this.resizingContainer.width = Math.max(100, Math.round((this.containerResizeStart.width + dx) / 10) * 10);
+      this.resizingContainer.height = Math.max(80, Math.round((this.containerResizeStart.height + dy) / 10) * 10);
+      return;
+    }
+
+    // Container Dragging (#4)
+    if (this.draggedContainer) {
+      const newX = mousePos.x - this.containerDragOffset.x;
+      const newY = mousePos.y - this.containerDragOffset.y;
+      const deltaX = newX - this.draggedContainer.x;
+      const deltaY = newY - this.draggedContainer.y;
+
+      this.draggedContainer.x = newX;
+      this.draggedContainer.y = newY;
+
+      // Move enclosed nodes along with the container
+      if (this.containerEnclosedNodesStart.size > 0) {
+        this.containerEnclosedNodesStart.forEach((start, nodeId) => {
+          const n = this.nodes.find((item) => item.id === nodeId);
+          if (n) {
+            n.x += deltaX;
+            n.y += deltaY;
+          }
+        });
+      }
+      return;
+    }
+
     // Node resizing
     if (this.resizingNode) {
       const dx = mousePos.x - this.nodeResizeStart.mouseX;
       const dy = mousePos.y - this.nodeResizeStart.mouseY;
       this.resizingNode.width = Math.max(80, Math.round((this.nodeResizeStart.width + dx) / 10) * 10);
       this.resizingNode.height = Math.max(40, Math.round((this.nodeResizeStart.height + dy) / 10) * 10);
+      return;
+    }
+
+    // Annotation resizing (#2)
+    if (this.resizingAnnotationNode) {
+      const dx = mousePos.x - this.annotationResizeStart.mouseX;
+      const dy = mousePos.y - this.annotationResizeStart.mouseY;
+      this.resizingAnnotationNode.annotationWidth = Math.max(
+        100,
+        Math.round(this.annotationResizeStart.width + dx)
+      );
+      this.resizingAnnotationNode.annotationHeight = Math.max(
+        44,
+        Math.round(this.annotationResizeStart.height + dy)
+      );
+      return;
+    }
+
+    // Annotation dragging (#2)
+    if (this.draggingAnnotationNode) {
+      const newBoxX = mousePos.x - this.annotationDragOffset.x;
+      const newBoxY = mousePos.y - this.annotationDragOffset.y;
+      this.draggingAnnotationNode.annotationOffsetX = Math.round(
+        newBoxX - this.draggingAnnotationNode.x
+      );
+      this.draggingAnnotationNode.annotationOffsetY = Math.round(
+        newBoxY - this.draggingAnnotationNode.y
+      );
       return;
     }
 
@@ -352,11 +831,17 @@ export class CanvasComponent {
     }
   }
 
-  onMouseUp(): void {
-    // Finish panel resizing
+  trackByPortIndex(index: number): number {
+    return index;
+  }
+
+  onMouseUp(event?: MouseEvent): void {
+    // Finish panel, node, and annotation resizing/dragging
     this.isResizingPalette = false;
     this.isResizingInspector = false;
     this.resizingNode = null;
+    this.draggingAnnotationNode = null;
+    this.resizingAnnotationNode = null;
 
     // Finish marquee selection
     if (this.isMarqueeSelecting) {
@@ -364,21 +849,89 @@ export class CanvasComponent {
       this.marqueeRect = null;
     }
 
-    // Finish node drag with 50px grid snap
+    // If drawing an edge and mouseup wasn't caught by a specific port circle, snap to nearest port or target node under cursor
+    if (this.drawingSource && this.tempEdge) {
+      const dropX = this.tempEdge.x2;
+      const dropY = this.tempEdge.y2;
+      let bestNode: WorkflowNode | null = null;
+      let bestPortIndex = 0;
+      let bestDist = Infinity;
+
+      for (const node of this.nodes) {
+        if (node.id === this.drawingSource.nodeId) continue;
+        const defaults = this.getDefaultSizeForType(node.type);
+        const w = node.width || defaults.width;
+        const h = node.height || defaults.height;
+        const offsets = this.getPortOffsets(node);
+
+        // Check distance to each port on this node
+        offsets.forEach((off, idx) => {
+          const px = node.x + off.x;
+          const py = node.y + off.y;
+          const dist = Math.hypot(dropX - px, dropY - py);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestNode = node;
+            bestPortIndex = idx;
+          }
+        });
+
+        // Also allow dropping anywhere inside the target node body
+        const insideNode =
+          dropX >= node.x - 12 &&
+          dropX <= node.x + w + 12 &&
+          dropY >= node.y - 12 &&
+          dropY <= node.y + h + 12;
+        if (insideNode && bestDist > 24 && bestNode === node) {
+          bestDist = 0;
+        }
+      }
+
+      if (bestNode && bestDist <= 28) {
+        this.completeEdge(bestNode, bestPortIndex, event);
+      }
+    }
+
+    // Finish node drag with 20px grid snap so 80px circles and 120px squares align centers cleanly
     if (this.draggedNode) {
       if (this.selectedNodeIds.has(this.draggedNode.id) && this.selectedNodeIds.size > 1) {
         this.selectedNodeIds.forEach((id) => {
           const node = this.nodes.find((n) => n.id === id);
           if (node) {
-            node.x = Math.round(node.x / 50) * 50;
-            node.y = Math.round(node.y / 50) * 50;
+            node.x = Math.round(node.x / 20) * 20;
+            node.y = Math.round(node.y / 20) * 20;
           }
         });
       } else {
-        this.draggedNode.x = Math.round(this.draggedNode.x / 50) * 50;
-        this.draggedNode.y = Math.round(this.draggedNode.y / 50) * 50;
+        this.draggedNode.x = Math.round(this.draggedNode.x / 20) * 20;
+        this.draggedNode.y = Math.round(this.draggedNode.y / 20) * 20;
       }
     }
+
+    // Finish container drawing (#4)
+    if (this.isDrawingContainer) {
+      if (this.containerDrawRect && this.containerDrawRect.width > 24 && this.containerDrawRect.height > 24) {
+        const c = this.createContainer(
+          this.containerDrawRect.x,
+          this.containerDrawRect.y,
+          this.containerDrawRect.width,
+          this.containerDrawRect.height
+        );
+        this.selectContainer(c);
+      }
+      this.isDrawingContainer = false;
+      this.containerDrawStart = { x: 0, y: 0 };
+      this.containerDrawRect = null;
+      this.canvasMode = 'select';
+    }
+
+    if (this.draggedContainer) {
+      this.draggedContainer.x = Math.round(this.draggedContainer.x / 10) * 10;
+      this.draggedContainer.y = Math.round(this.draggedContainer.y / 10) * 10;
+      this.draggedContainer = null;
+      this.containerEnclosedNodesStart.clear();
+    }
+    this.resizingContainer = null;
 
     // If was panning and didn't drag/move -> treat as click to deselect
     if (this.isPanning && !this.hasMovedDuringPan) {
@@ -422,12 +975,13 @@ export class CanvasComponent {
       event.clientY,
       this.svgRef.nativeElement
     );
+    const defaults = this.getDefaultSizeForType(node.type);
     this.resizingNode = node;
     this.nodeResizeStart = {
       mouseX: mousePos.x,
       mouseY: mousePos.y,
-      width: node.width || 120,
-      height: node.height || 60,
+      width: node.width || defaults.width,
+      height: node.height || defaults.height,
     };
   }
 
@@ -501,52 +1055,57 @@ export class CanvasComponent {
   // Unified Node Creator
   createNodeAt(type: NodeType, x: number, y: number) {
     let label = '';
-    let color = '';
+    const color = this.getDefaultColorForType(type);
+    const size = this.getDefaultSizeForType(type);
 
     switch (type) {
       case 'STATE':
         label = `State ${this.nodes.filter((n) => n.type === 'STATE').length + 1}`;
-        color = '#e3f2fd';
+        break;
+      case 'AUTOMATIC':
+        label = `Auto Task ${this.nodes.filter((n) => n.type === 'AUTOMATIC').length + 1}`;
+        break;
+      case 'MANUAL':
+        label = `User Task ${this.nodes.filter((n) => n.type === 'MANUAL').length + 1}`;
+        break;
+      case 'SUB_PROCESS':
+        label = `Sub-Process ${this.nodes.filter((n) => n.type === 'SUB_PROCESS').length + 1}`;
         break;
       case 'FAILED_STATE':
         label = 'Failed State';
-        color = '#fee2e2';
         break;
       case 'JUNCTION':
         label = 'Junction';
-        color = '#f1f5f9';
         break;
       case 'DECISION':
         label = 'Decision';
-        color = '#fffbeb';
         break;
       case 'FORK':
         label = 'Fork';
-        color = '#f3e8ff';
         break;
       case 'JOIN':
         label = 'Join';
-        color = '#f3e8ff';
         break;
       case 'START':
         label = 'Start';
-        color = '#ecfdf5';
         break;
       case 'END':
         label = 'End';
-        color = '#ffedd5';
         break;
     }
 
     const newNode: WorkflowNode = {
       id: this.getNextNodeId(),
       type,
+      originalType: type,
       x,
       y,
-      width: 120,
-      height: 60,
+      width: size.width,
+      height: size.height,
       label,
       color,
+      annotation: '',
+      showAnnotation: false,
       actions: [],
       guards: [],
       activities: [],
@@ -558,16 +1117,16 @@ export class CanvasComponent {
   // Spawns nodes in viewport center to avoid overlaps
   addNode(type: NodeType) {
     const center = this.getCanvasCenter();
-    let spawnX = Math.round(center.x / 50) * 50;
-    let spawnY = Math.round(center.y / 50) * 50;
+    let spawnX = Math.round(center.x / 20) * 20;
+    let spawnY = Math.round(center.y / 20) * 20;
 
-    // Shift down by 80px if collision detected
+    // Shift down by 140px if collision detected
     while (
       this.nodes.some(
-        (n) => Math.abs(n.x - spawnX) < 140 && Math.abs(n.y - spawnY) < 80
+        (n) => Math.abs(n.x - spawnX) < 140 && Math.abs(n.y - spawnY) < 140
       )
     ) {
-      spawnY += 80;
+      spawnY += 140;
     }
     this.createNodeAt(type, spawnX, spawnY);
   }
@@ -632,8 +1191,8 @@ export class CanvasComponent {
     this.tempEdge = { x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
   }
 
-  completeEdge(targetNode: WorkflowNode, portIndex: number, event: MouseEvent) {
-    event.stopPropagation();
+  completeEdge(targetNode: WorkflowNode, portIndex: number, event?: MouseEvent) {
+    if (event) event.stopPropagation();
     if (this.drawingSource && this.drawingSource.nodeId !== targetNode.id) {
       const sourceNode = this.nodes.find((n) => n.id === this.drawingSource!.nodeId);
       const newEdge: WorkflowEdge = {
@@ -646,6 +1205,7 @@ export class CanvasComponent {
         eventName: '',
         isDoubleSided: false,
         guard: '',
+        lineStyle: 'solid',
         actions: sourceNode?.actions && sourceNode.actions.length > 0 ? [...sourceNode.actions] : [],
         guards: sourceNode?.guards && sourceNode.guards.length > 0 ? [...sourceNode.guards] : [],
       };
@@ -790,8 +1350,8 @@ export class CanvasComponent {
         }
       } else {
         // Reversing / looping around nodes (e.g. facing away, loop over top/bottom)
-        const sNodeH = sourceNode.height || 60;
-        const tNodeH = targetNode.height || 60;
+        const sNodeH = sourceNode.height || 120;
+        const tNodeH = targetNode.height || 120;
         const topBypass = Math.min(sourceNode.y, targetNode.y) - 45 - Math.abs(channelOffset);
         const bottomBypass = Math.max(sourceNode.y + sNodeH, targetNode.y + tNodeH) + 45 + Math.abs(channelOffset);
         const bypassY = channelOffset >= 0 ? topBypass : bottomBypass;
@@ -952,9 +1512,9 @@ export class CanvasComponent {
     this.activeTab = 'properties';
   }
 
-  selectEdge(edge: WorkflowEdge, event: MouseEvent) {
-    event.stopPropagation();
-    if (event.ctrlKey || event.metaKey) {
+  selectEdge(edge: WorkflowEdge, event?: MouseEvent) {
+    if (event) event.stopPropagation();
+    if (event && (event.ctrlKey || event.metaKey)) {
       if (this.selectedEdgeIds.has(edge.id)) {
         this.selectedEdgeIds.delete(edge.id);
         if (this.selectedEdge?.id === edge.id) {
@@ -1003,39 +1563,66 @@ export class CanvasComponent {
 
   // Dropdown NodeType handler
   onNodeTypeChange(node: WorkflowNode) {
+    node.color = this.getDefaultColorForType(node.type);
+    const defaultSize = this.getDefaultSizeForType(node.type);
+    if (node.type === 'START' || node.type === 'END') {
+      node.width = defaultSize.width;
+      node.height = defaultSize.height;
+    } else if ((node.width || 0) < 100 || (node.height || 0) < 100) {
+      node.width = 120;
+      node.height = 120;
+    }
+
+    const defaultLabels = [
+      'Failed State',
+      'Junction',
+      'Fork',
+      'Join',
+      'Decision',
+      'Start',
+      'End',
+    ];
+
     switch (node.type) {
       case 'STATE':
-        node.color = '#e3f2fd';
-        if (!node.label || ['Failed State', 'Junction', 'Fork', 'Join', 'Decision', 'Start', 'End'].includes(node.label)) {
+        if (!node.label || defaultLabels.includes(node.label)) {
           node.label = `State ${this.nodes.filter((n) => n.type === 'STATE').length}`;
         }
         break;
+      case 'AUTOMATIC':
+        if (!node.label || defaultLabels.includes(node.label)) {
+          node.label = `Auto Task ${this.nodes.filter((n) => n.type === 'AUTOMATIC').length}`;
+        }
+        break;
+      case 'MANUAL':
+        if (!node.label || defaultLabels.includes(node.label)) {
+          node.label = `User Task ${this.nodes.filter((n) => n.type === 'MANUAL').length}`;
+        }
+        break;
+      case 'SUB_PROCESS':
+        if (!node.label || defaultLabels.includes(node.label)) {
+          node.label = `Sub-Process ${this.nodes.filter((n) => n.type === 'SUB_PROCESS').length}`;
+        }
+        break;
       case 'FAILED_STATE':
-        node.color = '#fee2e2';
         node.label = 'Failed State';
         break;
       case 'JUNCTION':
-        node.color = '#f1f5f9';
         node.label = 'Junction';
         break;
       case 'DECISION':
-        node.color = '#fffbeb';
         node.label = 'Decision';
         break;
       case 'FORK':
-        node.color = '#f3e8ff';
         node.label = 'Fork';
         break;
       case 'JOIN':
-        node.color = '#f3e8ff';
         node.label = 'Join';
         break;
       case 'START':
-        node.color = '#ecfdf5';
         node.label = 'Start';
         break;
       case 'END':
-        node.color = '#ffedd5';
         node.label = 'End';
         break;
     }
@@ -1102,9 +1689,9 @@ export class CanvasComponent {
       this.svgRef.nativeElement
     );
 
-    // Grid snapping (50px)
-    const x = Math.round(mousePos.x / 50) * 50;
-    const y = Math.round(mousePos.y / 50) * 50;
+    // Grid snapping (20px)
+    const x = Math.round(mousePos.x / 20) * 20;
+    const y = Math.round(mousePos.y / 20) * 20;
 
     this.createNodeAt(type, x, y);
   }
@@ -1133,11 +1720,17 @@ export class CanvasComponent {
     this.normalizeIds();
 
     const exportData: ExportedWorkflow = {
-      nodes: this.nodes.map((node) => ({
-        id: Number(node.id),
-        type: node.type,
-        label: node.label,
-      })),
+      nodes: this.nodes.map((node) => {
+        const exportedNode: any = {
+          id: Number(node.id),
+          type: node.type,
+          label: node.label,
+        };
+        if (node.annotation && node.annotation.trim()) {
+          exportedNode.annotation = node.annotation.trim();
+        }
+        return exportedNode;
+      }),
       edges: this.edges.map((edge) => {
         const sourceNode = this.nodes.find((n) => n.id === edge.sourceNodeId);
         const targetNode = this.nodes.find((n) => n.id === edge.targetNodeId);
@@ -1158,7 +1751,7 @@ export class CanvasComponent {
           guards = sourceNode.guards;
         }
 
-        return {
+        const exportedEdge: any = {
           id: Number(edge.id),
           sourceNodeId: Number(edge.sourceNodeId),
           sourceNodeLabel: sourceNode?.label || this.getNodeLabel(edge.sourceNodeId),
@@ -1170,8 +1763,16 @@ export class CanvasComponent {
           actions,
           guards,
         };
+        if (edge.lineStyle && edge.lineStyle !== 'solid') {
+          exportedEdge.lineStyle = edge.lineStyle;
+        }
+        return exportedEdge;
       }),
     };
+
+    if (this.containers && this.containers.length > 0) {
+      exportData.containers = this.containers;
+    }
 
     this.importExportText = JSON.stringify(exportData, null, 2);
   }
@@ -1181,57 +1782,96 @@ export class CanvasComponent {
     if (!this.importExportText.trim()) return;
     try {
       const parsed = JSON.parse(this.importExportText);
-      if (parsed.nodes && Array.isArray(parsed.nodes)) {
-        this.nodes = parsed.nodes.map((n: any, index: number) => {
-          const defaultX = n.x !== undefined ? n.x : 100 + (index % 4) * 200;
-          const defaultY = n.y !== undefined ? n.y : 150 + Math.floor(index / 4) * 150;
-          const defaultColor = n.color || this.getDefaultColorForType(n.type);
-
-          return {
-            id: n.id !== undefined ? n.id : index + 1,
-            type: n.type || 'STATE',
-            x: defaultX,
-            y: defaultY,
-            width: n.width || 120,
-            height: n.height || 60,
-            label: n.label || `State ${index + 1}`,
-            color: defaultColor,
-            actions: n.actions || [],
-            guards: n.guards || [],
-            activities: n.activities || [],
-          };
-        });
-      }
-
-      if (parsed.edges && Array.isArray(parsed.edges)) {
-        this.edges = parsed.edges.map((e: any, index: number) => {
-          return {
-            id: e.id !== undefined ? e.id : index + 1,
-            sourceNodeId: e.sourceNodeId,
-            sourcePortId: e.sourcePortId || '10', // Right port
-            targetNodeId: e.targetNodeId,
-            targetPortId: e.targetPortId || '7', // Left port
-            waypoints: e.waypoints || [],
-            eventName: e.eventName || '',
-            isDoubleSided: e.isDoubleSided || false,
-            guard: e.guard || (e.guards && e.guards[0]) || '',
-            actions: e.actions || [],
-            guards: e.guards || (e.guard ? [e.guard] : []),
-          };
-        });
-      }
-
-      this.normalizeIds();
-      this.deselectAll();
+      this.applyImportedWorkflowData(parsed);
     } catch (e) {
       alert('Failed to parse JSON. Please check coordinates and structure.');
     }
+  }
+
+  applyImportedWorkflowData(parsed: any) {
+    if (parsed.nodes && Array.isArray(parsed.nodes)) {
+      this.nodes = parsed.nodes.map((n: any, index: number) => {
+        const type: NodeType = n.type || 'STATE';
+        const defaultSize = this.getDefaultSizeForType(type);
+        const defaultX = n.x !== undefined ? n.x : 100 + (index % 4) * 200;
+        const defaultY = n.y !== undefined ? n.y : 160 + Math.floor(index / 4) * 180;
+        const defaultColor =
+          type === 'START' || type === 'END'
+            ? this.getDefaultColorForType(type)
+            : n.color || this.getDefaultColorForType(type);
+
+        return {
+          id: n.id !== undefined ? n.id : index + 1,
+          type,
+          originalType: n.originalType || type,
+          x: defaultX,
+          y: defaultY,
+          width: n.width || defaultSize.width,
+          height: n.height || defaultSize.height,
+          label: n.label || `State ${index + 1}`,
+          color: defaultColor,
+          annotation: n.annotation || '',
+          showAnnotation: !!(n.annotation && n.annotation.trim()),
+          annotationOffsetX: n.annotationOffsetX,
+          annotationOffsetY: n.annotationOffsetY,
+          annotationWidth: n.annotationWidth,
+          annotationHeight: n.annotationHeight,
+          actions: n.actions || [],
+          guards: n.guards || [],
+          activities: n.activities || [],
+        };
+      });
+    }
+
+    if (parsed.edges && Array.isArray(parsed.edges)) {
+      this.edges = parsed.edges.map((e: any, index: number) => {
+        return {
+          id: e.id !== undefined ? e.id : index + 1,
+          sourceNodeId: e.sourceNodeId,
+          sourcePortId: e.sourcePortId || '10', // Right port
+          targetNodeId: e.targetNodeId,
+          targetPortId: e.targetPortId || '7', // Left port
+          waypoints: e.waypoints || [],
+          eventName: e.eventName || '',
+          isDoubleSided: e.isDoubleSided || false,
+          guard: e.guard || (e.guards && e.guards[0]) || '',
+          lineStyle: e.lineStyle || 'solid',
+          actions: e.actions || [],
+          guards: e.guards || (e.guard ? [e.guard] : []),
+        };
+      });
+    }
+
+    if (parsed.containers && Array.isArray(parsed.containers)) {
+      this.containers = parsed.containers.map((c: any, index: number) => ({
+        id: c.id !== undefined ? c.id : index + 1,
+        x: c.x !== undefined ? c.x : 60,
+        y: c.y !== undefined ? c.y : 60,
+        width: c.width || 280,
+        height: c.height || 200,
+        label: c.label || `Group ${index + 1}`,
+        color: c.color || 'rgba(241, 245, 249, 0.45)',
+        borderColor: c.borderColor || '#94a3b8',
+        borderStyle: c.borderStyle || 'dashed',
+      }));
+    } else {
+      this.containers = [];
+    }
+
+    this.normalizeIds();
+    this.deselectAll();
   }
 
   getDefaultColorForType(type: NodeType): string {
     switch (type) {
       case 'STATE':
         return '#e3f2fd';
+      case 'AUTOMATIC':
+        return '#e0f2fe';
+      case 'MANUAL':
+        return '#f0f9ff';
+      case 'SUB_PROCESS':
+        return '#eef2ff';
       case 'FAILED_STATE':
         return '#fee2e2';
       case 'JUNCTION':
@@ -1242,12 +1882,306 @@ export class CanvasComponent {
       case 'JOIN':
         return '#f3e8ff';
       case 'START':
-        return '#ecfdf5';
+        return '#4ade80'; // Locked Green
       case 'END':
-        return '#ffedd5';
+        return '#f87171'; // Locked Red
       default:
         return '#e3f2fd';
     }
+  }
+
+  getStrokeColorForType(type: NodeType): string {
+    switch (type) {
+      case 'START':
+        return '#15803d';
+      case 'END':
+        return '#b91c1c';
+      case 'DECISION':
+        return '#d97706';
+      case 'FAILED_STATE':
+        return '#ef4444';
+      case 'JUNCTION':
+        return '#64748b';
+      case 'FORK':
+      case 'JOIN':
+        return '#a855f7';
+      case 'AUTOMATIC':
+        return '#0284c7';
+      case 'MANUAL':
+        return '#2563eb';
+      case 'SUB_PROCESS':
+        return '#4f46e5';
+      case 'STATE':
+      default:
+        return '#3b82f6';
+    }
+  }
+
+  // =========================================================================
+  // EXPORT & IMPORT FLOWCHART IMAGE ONLY (NO BACKGROUND SHEET)
+  // =========================================================================
+  buildCleanFlowchartSvg(): { svgString: string; width: number; height: number } | null {
+    if (this.nodes.length === 0 && this.containers.length === 0) {
+      alert('Canvas is empty! Add at least one state or container before exporting.');
+      return null;
+    }
+
+    // 1. Compute tight bounding box around all nodes, edges, containers, and annotations
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    this.containers.forEach((c) => {
+      minX = Math.min(minX, c.x);
+      minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x + c.width);
+      maxY = Math.max(maxY, c.y + c.height);
+    });
+
+    this.nodes.forEach((n) => {
+      const defaults = this.getDefaultSizeForType(n.type);
+      const w = n.width || defaults.width;
+      const h = n.height || defaults.height;
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + w);
+      maxY = Math.max(maxY, n.y + h);
+
+      if (n.annotation && n.annotation.trim()) {
+        const box = this.getAnnotationBox(n);
+        minX = Math.min(minX, box.x - 10);
+        minY = Math.min(minY, box.y - 10);
+        maxX = Math.max(maxX, box.x + box.width + 10);
+        maxY = Math.max(maxY, box.y + box.height + 10);
+      }
+    });
+
+    this.edges.forEach((e) => {
+      const pts = this.getEdgePoints(e);
+      pts.forEach((p) => {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      });
+    });
+
+    const pad = 28;
+    minX = Math.floor(minX - pad);
+    minY = Math.floor(minY - pad);
+    const width = Math.ceil(maxX - minX + pad);
+    const height = Math.ceil(maxY - minY + pad);
+
+    // 2. Serialize embedded graph data so exported SVG/PNG can be re-imported back!
+    const payload = JSON.stringify({
+      nodes: this.nodes,
+      edges: this.edges,
+      containers: this.containers,
+    });
+    const encodedPayload = btoa(unescape(encodeURIComponent(payload)));
+
+    // 3. Build pure standalone SVG containing ONLY the flowchart (zero background grid)
+    let containersMarkup = '';
+    this.containers.forEach((c) => {
+      const dash = c.borderStyle === 'solid' ? '' : 'stroke-dasharray="6, 4"';
+      containersMarkup += `<rect x="${c.x}" y="${c.y}" width="${c.width}" height="${c.height}" rx="12" ry="12" fill="${c.color || 'rgba(241, 245, 249, 0.45)'}" stroke="${c.borderColor || '#94a3b8'}" stroke-width="2" ${dash} />`;
+      containersMarkup += `<text x="${c.x + 14}" y="${c.y + 20}" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="700" fill="#475569">${this.escapeXml(c.label)}</text>`;
+    });
+
+    let edgesMarkup = '';
+    this.edges.forEach((edge) => {
+      const d = this.getEdgePath(edge);
+      const dash = this.getEdgeDashArray(edge);
+      const dashAttr = dash ? `stroke-dasharray="${dash}"` : '';
+      edgesMarkup += `<path d="${d}" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${dashAttr} marker-end="url(#export-arrow)" />`;
+
+      if (edge.eventName && edge.eventName.trim()) {
+        const info = this.getEdgeLabelInfo(edge);
+        const transformAttr = info.isVertical
+          ? `transform="rotate(90, ${info.x}, ${info.y})"`
+          : '';
+        edgesMarkup += `<text x="${info.x}" y="${info.y - 6}" text-anchor="middle" font-family="Inter, Segoe UI, sans-serif" font-size="11" font-weight="700" fill="#0f172a" stroke="rgba(255,255,255,0.85)" stroke-width="3" paint-order="stroke fill" ${transformAttr}>${this.escapeXml(edge.eventName)}</text>`;
+      }
+    });
+
+    let nodesMarkup = '';
+    this.nodes.forEach((node) => {
+      const defaults = this.getDefaultSizeForType(node.type);
+      const w = node.width || defaults.width;
+      const h = node.height || defaults.height;
+      const stroke = this.getStrokeColorForType(node.type);
+      const strokeWidth = node.type === 'END' ? 3.5 : 2;
+
+      if (node.type === 'START' || node.type === 'END') {
+        nodesMarkup += `<circle cx="${node.x + w / 2}" cy="${node.y + h / 2}" r="${w / 2}" fill="${node.color}" stroke="${stroke}" stroke-width="${strokeWidth}" />`;
+      } else if (node.type === 'DECISION') {
+        nodesMarkup += `<polygon points="${this.getRhombusPoints(node)}" fill="${node.color}" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" />`;
+      } else {
+        nodesMarkup += `<rect x="${node.x}" y="${node.y}" width="${w}" height="${h}" rx="12" ry="12" fill="${node.color}" stroke="${stroke}" stroke-width="2" />`;
+      }
+
+      // State Type Inner Icons
+      if (node.type === 'AUTOMATIC') {
+        // Mechanical Toothed Gear / Settings icon in top-left corner (#5)
+        nodesMarkup += `<g transform="translate(${node.x + 8}, ${node.y + 8}) scale(0.75)" stroke="#0f172a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </g>`;
+      } else if (node.type === 'MANUAL') {
+        // Human / User icon in top-left corner
+        nodesMarkup += `<g transform="translate(${node.x + 10}, ${node.y + 10})" stroke="#0f172a" stroke-width="1.6" fill="none">
+          <circle cx="9" cy="5.5" r="3.2" />
+          <path d="M3 16c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5" stroke-linecap="round" />
+        </g>`;
+      } else if (node.type === 'SUB_PROCESS') {
+        // Plus [+] icon in bottom-middle
+        const bx = node.x + w / 2 - 8;
+        const by = node.y + h - 22;
+        nodesMarkup += `<g transform="translate(${bx}, ${by})" stroke="#0f172a" stroke-width="1.6" fill="#ffffff">
+          <rect x="0" y="0" width="16" height="16" rx="3" />
+          <path d="M8 3.5v9M3.5 8h9" stroke-linecap="round" />
+        </g>`;
+      }
+
+      // Node Label
+      nodesMarkup += `<text x="${node.x + w / 2}" y="${node.y + h / 2 + 4}" text-anchor="middle" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="600" fill="#1e293b">${this.escapeXml(node.label)}</text>`;
+
+      // Attached BPMN Text Annotation (if non-empty)
+      if (node.annotation && node.annotation.trim()) {
+        const lines = node.annotation.trim().split(/\r?\n/);
+        const box = this.getAnnotationBox(node);
+        const boxH = Math.max(box.height, lines.length * 16 + 16);
+        nodesMarkup += `<line x1="${box.lineX1}" y1="${box.lineY1}" x2="${box.lineX2}" y2="${box.lineY2}" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="3, 3" />`;
+        nodesMarkup += `<path d="M ${box.x + 12} ${box.y} L ${box.x} ${box.y} L ${box.x} ${box.y + boxH} L ${box.x + 12} ${box.y + boxH}" fill="none" stroke="#0f172a" stroke-width="2" />`;
+        lines.forEach((line, idx) => {
+          nodesMarkup += `<text x="${box.x + 8}" y="${box.y + 18 + idx * 16}" font-family="Inter, Segoe UI, sans-serif" font-size="11" fill="#0f172a">${this.escapeXml(line)}</text>`;
+        });
+      }
+    });
+
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${width} ${height}" width="${width}" height="${height}">
+  <metadata id="workflow-flowchart-data">${encodedPayload}</metadata>
+  <defs>
+    <marker id="export-arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 10 4 L 0 8 z" fill="#475569" />
+    </marker>
+  </defs>
+  <g class="export-containers">${containersMarkup}</g>
+  <g>${edgesMarkup}</g>
+  <g>${nodesMarkup}</g>
+</svg>`;
+
+    return { svgString, width, height };
+  }
+
+  escapeXml(unsafe: string): string {
+    return (unsafe || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  // Export Flowchart as Image (PNG or SVG) with transparent background (no grid sheet)
+  exportFlowchartImage(format: 'png' | 'svg' = 'png'): void {
+    const built = this.buildCleanFlowchartSvg();
+    if (!built) return;
+
+    const payload = JSON.stringify({
+      nodes: this.nodes,
+      edges: this.edges,
+    });
+    const encodedPayload = btoa(unescape(encodeURIComponent(payload)));
+
+    if (format === 'svg') {
+      const blob = new Blob([built.svgString], { type: 'image/svg+xml;charset=utf-8' });
+      this.triggerFileDownload(blob, 'flowchart-diagram.svg');
+      return;
+    }
+
+    // Render SVG to 2x Retina transparent PNG
+    const svgBlob = new Blob([built.svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = built.width * scale;
+      canvas.height = built.height * scale;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.scale(scale, scale);
+        ctx.clearRect(0, 0, built.width, built.height); // Transparent background
+        ctx.drawImage(img, 0, 0, built.width, built.height);
+      }
+      URL.revokeObjectURL(url);
+
+      canvas.toBlob((pngBlob) => {
+        if (!pngBlob) return;
+        // Append invisible workflow metadata marker after PNG IEND so this PNG can also be re-imported!
+        const trailer = `\n/*WORKFLOW_FLOWCHART_DATA:${encodedPayload}:END_WORKFLOW_DATA*/`;
+        const combinedBlob = new Blob([pngBlob, trailer], { type: 'image/png' });
+        this.triggerFileDownload(combinedBlob, 'flowchart-diagram.png');
+      }, 'image/png');
+    };
+    img.src = url;
+  }
+
+  triggerFileDownload(blob: Blob, filename: string): void {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  // Import Flowchart from exported PNG, SVG, or JSON file
+  onImportFlowchartFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = reader.result as string;
+      try {
+        // Case 1: Exported PNG with embedded workflow trailer
+        const pngMatch = content.match(
+          /\/\*WORKFLOW_FLOWCHART_DATA:([A-Za-z0-9+/=]+):END_WORKFLOW_DATA\*\//
+        );
+        if (pngMatch && pngMatch[1]) {
+          const jsonStr = decodeURIComponent(escape(atob(pngMatch[1])));
+          this.applyImportedWorkflowData(JSON.parse(jsonStr));
+          input.value = '';
+          return;
+        }
+
+        // Case 2: Exported SVG with <metadata id="workflow-flowchart-data">
+        const svgMatch = content.match(
+          /<metadata[^>]*id="workflow-flowchart-data"[^>]*>([A-Za-z0-9+/=]+)<\/metadata>/
+        );
+        if (svgMatch && svgMatch[1]) {
+          const jsonStr = decodeURIComponent(escape(atob(svgMatch[1])));
+          this.applyImportedWorkflowData(JSON.parse(jsonStr));
+          input.value = '';
+          return;
+        }
+
+        // Case 3: Direct JSON file
+        const parsed = JSON.parse(content);
+        this.applyImportedWorkflowData(parsed);
+      } catch (err) {
+        alert(
+          'Could not import flowchart from this file. Please select a PNG, SVG, or JSON exported from this editor.'
+        );
+      }
+      input.value = '';
+    };
+    reader.readAsText(file);
   }
 
   clearCanvas() {
@@ -1259,3 +2193,4 @@ export class CanvasComponent {
     }
   }
 }
+

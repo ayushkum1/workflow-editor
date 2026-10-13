@@ -5,7 +5,7 @@
     (wheel)="onWheel($event)"
     (mousedown)="onMouseDown($event)"
     (mousemove)="onMouseMove($event)"
-    (mouseup)="onMouseUp()"
+    (mouseup)="onMouseUp($event)"
     (contextmenu)="$event.preventDefault()"
     (dragover)="onDragOver($event)"
     (drop)="onDrop($event)"
@@ -19,9 +19,7 @@
     >
       <!-- Minimal Floater Header -->
       <div class="floater-header">
-        <span class="floater-title">
-          <span class="icon">🎨</span> States
-        </span>
+        <span class="floater-title">States</span>
         <button
           class="floater-toggle-btn"
           (click)="togglePalette()"
@@ -31,7 +29,7 @@
         </button>
       </div>
 
-      <!-- Adaptive Responsive Grid of Shapes -->
+      <!-- Adaptive Responsive Grid of Real-Time Shapes (#3) -->
       <div class="floater-items-grid" *ngIf="!isPaletteCollapsed">
         <div
           *ngFor="let item of paletteShapes"
@@ -42,9 +40,95 @@
           (click)="addNode(item.type)"
           [title]="'Add ' + item.label + ' (drag or click)'"
         >
-          <span class="pill-dot"></span>
+          <!-- Real-Time Shape Preview SVG -->
+          <svg class="palette-shape-svg" viewBox="0 0 28 28" width="24" height="24">
+            <!-- START & END: Circle -->
+            <circle
+              *ngIf="item.type === 'START' || item.type === 'END'"
+              cx="14"
+              cy="14"
+              r="11"
+              [attr.fill]="getDefaultColorForType(item.type)"
+              [attr.stroke]="getStrokeColorForType(item.type)"
+              [attr.stroke-width]="item.type === 'END' ? 2.8 : 2"
+            />
+
+            <!-- DECISION: Rhombus (Diamond) -->
+            <polygon
+              *ngIf="item.type === 'DECISION'"
+              points="14,2 26,14 14,26 2,14"
+              [attr.fill]="getDefaultColorForType(item.type)"
+              [attr.stroke]="getStrokeColorForType(item.type)"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+
+            <!-- Standard & Task States: Rounded Square -->
+            <rect
+              *ngIf="item.type !== 'START' && item.type !== 'END' && item.type !== 'DECISION'"
+              x="3"
+              y="3"
+              width="22"
+              height="22"
+              rx="4.5"
+              ry="4.5"
+              [attr.fill]="getDefaultColorForType(item.type)"
+              [attr.stroke]="getStrokeColorForType(item.type)"
+              stroke-width="2"
+            />
+
+            <!-- AUTOMATIC Inner Mechanical Gear Icon -->
+            <g
+              *ngIf="item.type === 'AUTOMATIC'"
+              transform="translate(5.5, 5.5) scale(0.45)"
+              fill="none"
+              stroke="#0f172a"
+              stroke-width="2.3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </g>
+
+            <!-- MANUAL Inner Human Icon -->
+            <g
+              *ngIf="item.type === 'MANUAL'"
+              transform="translate(6, 5.5) scale(0.55)"
+              fill="none"
+              stroke="#0f172a"
+              stroke-width="2.2"
+              stroke-linecap="round"
+            >
+              <circle cx="9" cy="5.5" r="3.2" />
+              <path d="M3 16c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5" />
+            </g>
+
+            <!-- SUB_PROCESS Inner [+] Box in Bottom-Middle -->
+            <g *ngIf="item.type === 'SUB_PROCESS'" transform="translate(10, 15.5)">
+              <rect x="0" y="0" width="8" height="8" rx="1.5" fill="#ffffff" stroke="#0f172a" stroke-width="1.3" />
+              <path d="M4 1.8v4.4M1.8 4h4.4" stroke="#0f172a" stroke-width="1.3" stroke-linecap="round" />
+            </g>
+          </svg>
           <span class="pill-label">{{ item.label }}</span>
         </div>
+      </div>
+
+      <!-- Container / Group Box Tool -->
+      <div class="floater-footer" *ngIf="!isPaletteCollapsed">
+        <button
+          type="button"
+          class="palette-container-tool-btn"
+          [class.active]="canvasMode === 'draw-container'"
+          (click)="setCanvasMode('draw-container')"
+          title="Click and drag on the canvas to draw a container group box"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="4" stroke-dasharray="3,3" />
+            <path d="M12 8v8M8 12h8" />
+          </svg>
+          <span>Draw Group Box</span>
+        </button>
       </div>
 
       <!-- Width resize handle on right edge of floater -->
@@ -141,17 +225,108 @@
           class="marquee-box"
         />
 
+        <!-- CONTAINERS / GROUP BOXES LAYER (Rendered behind edges and nodes) -->
+        <g class="containers-layer">
+          <g
+            *ngFor="let container of containers"
+            class="workflow-container-group"
+            [class.selected]="selectedContainer?.id === container.id"
+            (mousedown)="startDragContainer(container, $event)"
+            (dblclick)="startInlineEditContainer(container, $event)"
+          >
+            <!-- Main rounded rectangle (4 edges: square or rectangle, rounded corners rx=12 ry=12) -->
+            <rect
+              [attr.x]="container.x"
+              [attr.y]="container.y"
+              [attr.width]="container.width"
+              [attr.height]="container.height"
+              rx="12"
+              ry="12"
+              [attr.fill]="container.color || 'rgba(241, 245, 249, 0.45)'"
+              [attr.stroke]="selectedContainer?.id === container.id ? '#6366f1' : (container.borderColor || '#cbd5e1')"
+              [attr.stroke-width]="selectedContainer?.id === container.id ? 2.5 : 1.5"
+              [attr.stroke-dasharray]="container.borderStyle === 'dashed' ? '6,4' : (container.borderStyle === 'dotted' ? '2,3' : 'none')"
+              class="container-rect"
+            />
+
+            <!-- Header Tag Background for container label -->
+            <path
+              [attr.d]="'M ' + container.x + ' ' + (container.y + 12) +
+                        ' Q ' + container.x + ' ' + container.y + ' ' + (container.x + 12) + ' ' + container.y +
+                        ' L ' + (container.x + Math.min(container.width - 12, 160)) + ' ' + container.y +
+                        ' L ' + (container.x + Math.min(container.width - 12, 160)) + ' ' + (container.y + 26) +
+                        ' L ' + container.x + ' ' + (container.y + 26) + ' Z'"
+              [attr.fill]="selectedContainer?.id === container.id ? '#e0e7ff' : '#f1f5f9'"
+              class="container-tag-bg"
+            />
+
+            <!-- Container Label (inline editable on double click) -->
+            <foreignObject
+              *ngIf="editingContainerId === container.id"
+              [attr.x]="container.x + 10"
+              [attr.y]="container.y + 3"
+              [attr.width]="Math.min(container.width - 20, 200)"
+              height="22"
+            >
+              <input
+                [id]="'container-inline-edit-' + container.id"
+                type="text"
+                class="container-inline-input"
+                [(ngModel)]="editingContainerLabel"
+                (blur)="saveInlineEditContainer(container)"
+                (keydown.enter)="saveInlineEditContainer(container)"
+                (keydown.escape)="cancelInlineEditContainer()"
+                (mousedown)="$event.stopPropagation()"
+              />
+            </foreignObject>
+
+            <text
+              *ngIf="editingContainerId !== container.id"
+              [attr.x]="container.x + 12"
+              [attr.y]="container.y + 17"
+              class="container-label-text"
+            >
+              {{ container.label }}
+            </text>
+
+            <!-- Container Resize Handle (Bottom-Right corner) -->
+            <g
+              *ngIf="selectedContainer?.id === container.id"
+              class="container-resize-handle-group"
+              [attr.transform]="'translate(' + (container.x + container.width - 14) + ',' + (container.y + container.height - 14) + ')'"
+              (mousedown)="startResizeContainer(container, $event)"
+              title="Drag to resize group box"
+            >
+              <rect x="-4" y="-4" width="22" height="22" fill="transparent" style="cursor: nwse-resize;" />
+              <rect x="0" y="0" width="12" height="12" rx="2" class="container-resize-handle" />
+            </g>
+          </g>
+
+          <!-- Active Drawing Rubberband Rect when drawing a new container -->
+          <rect
+            *ngIf="isDrawingContainer && containerDrawRect"
+            [attr.x]="containerDrawRect.x"
+            [attr.y]="containerDrawRect.y"
+            [attr.width]="containerDrawRect.width"
+            [attr.height]="containerDrawRect.height"
+            rx="12"
+            ry="12"
+            class="container-drawing-rubberband"
+          />
+        </g>
+
         <!-- EDGES (Transitions) -->
         <g
           *ngFor="let edge of edges"
           class="edge-group"
           [class.selected]="selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id)"
         >
-          <!-- Core visible line -->
+          <!-- Core visible line (supports solid, dotted, dashed/lined, dash-dot) -->
           <path
             class="edge-line"
             fill="none"
             [attr.d]="getEdgePath(edge)"
+            [attr.stroke-dasharray]="getEdgeDashArray(edge)"
             [attr.marker-end]="(selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id)) ? 'url(#arrowhead-selected)' : 'url(#arrowhead)'"
           />
 
@@ -165,7 +340,7 @@
             (contextmenu)="deleteEdge(edge.id, $event)"
           />
 
-          <!-- Edge Event Name Card: In the exact middle of the edge path, vertical if along Y-axis -->
+          <!-- Edge Event Name: Transparent background, visible text in middle of edge -->
           <g
             *ngIf="getEdgeLabelInfo(edge) as info"
             class="edge-label-group"
@@ -174,19 +349,18 @@
             (click)="selectEdge(edge, $event)"
           >
             <ng-container *ngIf="selectedEdge?.id === edge.id || selectedEdgeIds.has(edge.id) || (edge.eventName && edge.eventName.trim() !== '')">
-              <!-- Horizontal Pill -->
+              <!-- Horizontal Transparent Label -->
               <ng-container *ngIf="!info.isVertical">
                 <rect
                   [attr.x]="info.x - 45"
-                  [attr.y]="info.y - 12"
+                  [attr.y]="info.y - 14"
                   width="90"
                   height="24"
-                  rx="12"
                   class="edge-label-bg"
                 />
                 <text
                   [attr.x]="info.x"
-                  [attr.y]="info.y + 4"
+                  [attr.y]="info.y - 4"
                   text-anchor="middle"
                   class="edge-label-text"
                 >
@@ -194,19 +368,18 @@
                 </text>
               </ng-container>
 
-              <!-- Vertical Pill -->
+              <!-- Vertical Transparent Label -->
               <ng-container *ngIf="info.isVertical">
                 <rect
-                  [attr.x]="info.x - 12"
+                  [attr.x]="info.x - 14"
                   [attr.y]="info.y - 45"
                   width="24"
                   height="90"
-                  rx="12"
                   class="edge-label-bg"
                 />
                 <text
                   [attr.x]="info.x"
-                  [attr.y]="info.y + 4"
+                  [attr.y]="info.y - 4"
                   text-anchor="middle"
                   class="edge-label-text vertical-text"
                   [attr.transform]="'rotate(90, ' + info.x + ', ' + info.y + ')'"
@@ -218,41 +391,119 @@
           </g>
         </g>
 
-        <!-- NODES (Shapes) -->
+        <!-- NODES (States) -->
         <g
           *ngFor="let node of nodes"
           (mousedown)="onNodeMouseDown(node, $event)"
           (dblclick)="startInlineEdit(node, $event)"
+          (mouseenter)="hoveredNodeId = node.id"
+          (mouseleave)="hoveredNodeId = null"
           class="node-group"
           [class.selected]="selectedNode?.id === node.id || selectedNodeIds.has(node.id)"
           [class.dragging]="node.isDragging"
         >
-          <!-- Resizable Rect -->
+          <!-- Dashed Blue Selection Outline (matches BPMN screenshot) -->
           <rect
-            [attr.x]="node.x"
-            [attr.y]="node.y"
-            [attr.width]="node.width || 120"
-            [attr.height]="node.height || 60"
-            rx="8"
-            ry="8"
-            [attr.fill]="node.color"
+            *ngIf="selectedNode?.id === node.id || selectedNodeIds.has(node.id)"
+            [attr.x]="node.x - 6"
+            [attr.y]="node.y - 6"
+            [attr.width]="(node.width || getDefaultSizeForType(node.type).width) + 12"
+            [attr.height]="(node.height || getDefaultSizeForType(node.type).height) + 12"
+            rx="6"
+            ry="6"
+            class="node-selection-frame"
+          />
+
+          <!-- SHAPE 1: Circle for START (Green) and END (Red) -->
+          <ellipse
+            *ngIf="node.type === 'START' || node.type === 'END'"
+            [attr.cx]="node.x + (node.width || 80) / 2"
+            [attr.cy]="node.y + (node.height || 80) / 2"
+            [attr.rx]="(node.width || 80) / 2"
+            [attr.ry]="(node.height || 80) / 2"
+            [attr.fill]="node.type === 'START' ? '#4ade80' : '#f87171'"
             class="shape-element"
-            [class.shape-state]="node.type === 'STATE'"
-            [class.shape-failed]="node.type === 'FAILED_STATE'"
-            [class.shape-junction]="node.type === 'JUNCTION'"
-            [class.shape-decision]="node.type === 'DECISION'"
-            [class.shape-fork]="node.type === 'FORK'"
-            [class.shape-join]="node.type === 'JOIN'"
             [class.shape-start]="node.type === 'START'"
             [class.shape-end]="node.type === 'END'"
           />
-          
+
+          <!-- SHAPE 2: Rhombus (Diamond) for DECISION -->
+          <polygon
+            *ngIf="node.type === 'DECISION'"
+            [attr.points]="getRhombusPoints(node)"
+            [attr.fill]="node.color"
+            class="shape-element shape-decision"
+          />
+
+          <!-- SHAPE 3: Rounded Square (120x120 default) for Standard & Task States -->
+          <rect
+            *ngIf="node.type !== 'START' && node.type !== 'END' && node.type !== 'DECISION'"
+            [attr.x]="node.x"
+            [attr.y]="node.y"
+            [attr.width]="node.width || 120"
+            [attr.height]="node.height || 120"
+            rx="12"
+            ry="12"
+            [attr.fill]="node.color"
+            class="shape-element"
+            [class.shape-state]="node.type === 'STATE'"
+            [class.shape-automatic]="node.type === 'AUTOMATIC'"
+            [class.shape-manual]="node.type === 'MANUAL'"
+            [class.shape-subprocess]="node.type === 'SUB_PROCESS'"
+            [class.shape-failed]="node.type === 'FAILED_STATE'"
+            [class.shape-junction]="node.type === 'JUNCTION'"
+            [class.shape-fork]="node.type === 'FORK'"
+            [class.shape-join]="node.type === 'JOIN'"
+          />
+
+          <!-- STATE INNER MARKER ICONS (#6) -->
+          <!-- Automatic: Mechanical Toothed Gear icon in top-left corner (#5) -->
+          <g
+            *ngIf="node.type === 'AUTOMATIC'"
+            [attr.transform]="'translate(' + (node.x + 8) + ',' + (node.y + 8) + ') scale(0.75)'"
+            class="node-inner-icon"
+            fill="none"
+            stroke="#0f172a"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </g>
+
+          <!-- Manual: Human / User bust icon in top-left corner -->
+          <g
+            *ngIf="node.type === 'MANUAL'"
+            [attr.transform]="'translate(' + (node.x + 10) + ',' + (node.y + 10) + ')'"
+            class="node-inner-icon"
+          >
+            <circle cx="9" cy="5.5" r="3.2" fill="none" stroke="#0f172a" stroke-width="1.7" />
+            <path
+              d="M3 16c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5"
+              fill="none"
+              stroke="#0f172a"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+          </g>
+
+          <!-- Sub-process: Plus [+] icon in bottom middle -->
+          <g
+            *ngIf="node.type === 'SUB_PROCESS'"
+            [attr.transform]="'translate(' + (node.x + (node.width || 120) / 2 - 8) + ',' + (node.y + (node.height || 120) - 22) + ')'"
+            class="node-inner-icon"
+          >
+            <rect x="0" y="0" width="16" height="16" rx="3" fill="#ffffff" stroke="#0f172a" stroke-width="1.6" />
+            <path d="M8 3.5v9M3.5 8h9" stroke="#0f172a" stroke-width="1.6" stroke-linecap="round" />
+          </g>
+
           <!-- Double click inline text editor or regular text display -->
           <foreignObject
             *ngIf="editingNodeId === node.id"
             [attr.x]="node.x + 8"
-            [attr.y]="node.y + (node.height || 60) / 2 - 14"
-            [attr.width]="(node.width || 120) - 16"
+            [attr.y]="node.y + (node.height || getDefaultSizeForType(node.type).height) / 2 - 14"
+            [attr.width]="(node.width || getDefaultSizeForType(node.type).width) - 16"
             height="28"
           >
             <input
@@ -269,28 +520,202 @@
 
           <text
             *ngIf="editingNodeId !== node.id"
-            [attr.x]="node.x + (node.width || 120) / 2"
-            [attr.y]="node.y + (node.height || 60) / 2 + 4"
+            [attr.x]="node.x + (node.width || getDefaultSizeForType(node.type).width) / 2"
+            [attr.y]="node.y + (node.height || getDefaultSizeForType(node.type).height) / 2 + 4"
             text-anchor="middle"
             class="node-label"
           >
             {{ node.label }}
           </text>
 
+          <!-- HOVER & CLICK FLOATING TOOLTIP (#4, #7, #8) -->
+          <!-- Highlights current state type on hover, shows Automatic / Manual / Sub-process / Reset / Delete icons on click or hover -->
+          <foreignObject
+            *ngIf="!drawingSource && (hoveredNodeId === node.id || selectedNode?.id === node.id)"
+            [attr.x]="node.x + (node.width || getDefaultSizeForType(node.type).width) / 2 - 108"
+            [attr.y]="node.y - 48"
+            width="216"
+            height="36"
+            class="node-tooltip-fo"
+            (mousedown)="$event.stopPropagation()"
+          >
+            <div class="node-floating-tooltip">
+              <!-- Highlighted State Type Badge (#7) -->
+              <span class="tooltip-type-badge" [attr.data-type]="node.type">
+                {{ node.type === 'SUB_PROCESS' ? 'SUB-PROC' : (node.type === 'FAILED_STATE' ? 'FAILED' : node.type) }}
+              </span>
+
+              <!-- Icon Switcher for Automatic, Manual, Sub-process (#8, #5) -->
+              <ng-container *ngIf="node.type !== 'START' && node.type !== 'END'">
+                <!-- Automatic with Mechanical Gear Cogwheel Icon (#5) -->
+                <button
+                  type="button"
+                  class="tooltip-icon-btn"
+                  [class.active]="node.type === 'AUTOMATIC'"
+                  (click)="setNodeSubType(node, 'AUTOMATIC', $event)"
+                  title="Automatic State (Gear)"
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+
+                <!-- Manual with Human Icon -->
+                <button
+                  type="button"
+                  class="tooltip-icon-btn"
+                  [class.active]="node.type === 'MANUAL'"
+                  (click)="setNodeSubType(node, 'MANUAL', $event)"
+                  title="Manual State (Human)"
+                >
+                  <svg viewBox="0 0 18 18" width="13" height="13">
+                    <circle cx="9" cy="5.5" r="3" fill="none" stroke="currentColor" stroke-width="1.7" />
+                    <path d="M3 15.5c0-3 2.7-5 6-5s6 2 6 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                </button>
+
+                <!-- Sub-process with [+] Icon -->
+                <button
+                  type="button"
+                  class="tooltip-icon-btn"
+                  [class.active]="node.type === 'SUB_PROCESS'"
+                  (click)="setNodeSubType(node, 'SUB_PROCESS', $event)"
+                  title="Sub-Process State (+)"
+                >
+                  <svg viewBox="0 0 18 18" width="13" height="13">
+                    <rect x="2" y="2" width="14" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7" />
+                    <path d="M9 5v8M5 9h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                </button>
+
+                <!-- Reset to Original State Type (#4) -->
+                <button
+                  type="button"
+                  class="tooltip-icon-btn reset-icon-btn"
+                  [class.active]="node.originalType && node.type !== node.originalType"
+                  [class.disabled]="!node.originalType || node.type === node.originalType"
+                  (click)="resetNodeToOriginalType(node, $event)"
+                  [title]="'Reset to original state (' + getFormattedTypeLabel(node.originalType || 'STATE') + ')'"
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                </button>
+              </ng-container>
+
+              <!-- Delete State Icon Button -->
+              <button
+                type="button"
+                class="tooltip-icon-btn delete-icon-btn"
+                (click)="deleteNode(node.id, $event)"
+                title="Delete State"
+              >
+                <svg viewBox="0 0 18 18" width="13" height="13">
+                  <path d="M3.5 5h11M7 5V3.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V5M5 5l.8 9.5a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9L13 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </foreignObject>
+
+          <!-- BPMN TEXT ANNOTATION CALLOUT (#2, #4 - Movable & Resizable Bracket + Textarea) -->
+          <g
+            *ngIf="getAnnotationBox(node) as box"
+            [style.display]="(selectedNode?.id === node.id || node.showAnnotation || (node.annotation && node.annotation.trim() !== '')) ? 'inline' : 'none'"
+            class="bpmn-annotation-group"
+            (mousedown)="$event.stopPropagation()"
+          >
+            <!-- Dotted diagonal association line from node to bracket -->
+            <line
+              [attr.x1]="box.lineX1"
+              [attr.y1]="box.lineY1"
+              [attr.x2]="box.lineX2"
+              [attr.y2]="box.lineY2"
+              class="annotation-dotted-line"
+            />
+
+            <!-- Open Left Square Bracket '[' -->
+            <path
+              [attr.d]="
+                'M ' + (box.x + 12) + ' ' + box.y +
+                ' L ' + box.x + ' ' + box.y +
+                ' L ' + box.x + ' ' + (box.y + box.height) +
+                ' L ' + (box.x + 12) + ' ' + (box.y + box.height)
+              "
+              class="annotation-bracket"
+            />
+
+            <!-- Drag handle on the bracket spine so user can grab and move anywhere (#2) -->
+            <rect
+              [attr.x]="box.x - 6"
+              [attr.y]="box.y"
+              width="14"
+              [attr.height]="box.height"
+              class="annotation-drag-handle"
+              (mousedown)="startDragAnnotation(node, $event)"
+              title="Drag to move note"
+            />
+
+            <!-- Top Drag Grip Bar -->
+            <g
+              [attr.transform]="'translate(' + (box.x + 6) + ',' + (box.y - 10) + ')'"
+              class="annotation-drag-header"
+              (mousedown)="startDragAnnotation(node, $event)"
+              title="Drag to move note"
+            >
+              <rect x="0" y="0" [attr.width]="box.width - 6" height="10" fill="transparent" />
+              <circle cx="8" cy="5" r="1.5" fill="#94a3b8" />
+              <circle cx="14" cy="5" r="1.5" fill="#94a3b8" />
+              <circle cx="20" cy="5" r="1.5" fill="#94a3b8" />
+            </g>
+
+            <!-- Editable Textarea inside the bracket -->
+            <foreignObject
+              [attr.x]="box.x + 6"
+              [attr.y]="box.y + 2"
+              [attr.width]="box.width - 6"
+              [attr.height]="box.height - 4"
+            >
+              <textarea
+                [id]="'node-annotation-' + node.id"
+                class="annotation-textarea"
+                [(ngModel)]="node.annotation"
+                placeholder="Add task note (e.g. Complete within 10 days)..."
+                (mousedown)="$event.stopPropagation()"
+                (click)="$event.stopPropagation()"
+              ></textarea>
+            </foreignObject>
+
+            <!-- Annotation Resize Handle (Bottom-Right) (#2, #3 - Large hit area, stable) -->
+            <g
+              *ngIf="selectedNode?.id === node.id || node.showAnnotation"
+              class="annotation-resize-handle-group"
+              [attr.transform]="'translate(' + (box.x + box.width - 12) + ',' + (box.y + box.height - 12) + ')'"
+              (mousedown)="startResizeAnnotation(node, $event)"
+              title="Drag to resize note"
+            >
+              <!-- Invisible larger hit area to ensure effortless click and no mouse drop -->
+              <rect x="-4" y="-4" width="20" height="20" fill="transparent" style="cursor: nwse-resize;" />
+              <!-- Visible handle -->
+              <rect x="0" y="0" width="12" height="12" rx="2" class="annotation-resize-handle" />
+            </g>
+          </g>
+
           <!-- Node Resize Handle (Bottom-Right) -->
           <rect
             *ngIf="selectedNode?.id === node.id || selectedNodeIds.has(node.id)"
             class="node-resize-handle"
-            [attr.x]="node.x + (node.width || 120) - 8"
-            [attr.y]="node.y + (node.height || 60) - 8"
+            [attr.x]="node.x + (node.width || getDefaultSizeForType(node.type).width) - 8"
+            [attr.y]="node.y + (node.height || getDefaultSizeForType(node.type).height) - 8"
             width="8"
             height="8"
             (mousedown)="startResizeNode(node, $event)"
           />
 
-          <!-- PORTS Group (Rendered for hovered nodes) -->
+          <!-- PORTS Group (Rendered for hovered nodes, trackBy prevents DOM recreation during drag/hover) -->
           <g class="ports-group">
-            <ng-container *ngFor="let offset of getPortOffsets(node); let i = index">
+            <ng-container *ngFor="let offset of getPortOffsets(node); let i = index; trackBy: trackByPortIndex">
               <!-- Broad mouse hit area for connection creation -->
               <circle
                 class="port-hit-area"
@@ -323,7 +748,7 @@
       </g>
     </svg>
 
-    <!-- Floating Zoom Controls & Mode Switcher -->
+    <!-- Floating Zoom Controls, Mode Switcher & Flowchart Image Export/Import (#9) -->
     <div class="zoom-capsule">
       <div class="mode-toggle-group">
         <button
@@ -342,6 +767,14 @@
         >
           ⬚ Select
         </button>
+        <button
+          class="mode-btn"
+          [class.active]="canvasMode === 'draw-container'"
+          (click)="setCanvasMode('draw-container')"
+          title="Draw Container / Group Box tool: drag on canvas to create box"
+        >
+          ▢ Group Box
+        </button>
       </div>
 
       <div class="separator"></div>
@@ -353,6 +786,48 @@
       <button (click)="coord.zoomOut()" title="Zoom Out">−</button>
       <div class="separator"></div>
       <button (click)="coord.resetZoom()" class="reset-btn" title="Reset View">⟲</button>
+
+      <div class="separator"></div>
+
+      <!-- Dedicated Flowchart Image Export / Import Buttons & Clear Canvas (#6, #9) -->
+      <div class="flowchart-io-group">
+        <button
+          class="io-action-btn"
+          (click)="exportFlowchartImage('png')"
+          title="Export Flowchart as Transparent PNG (No Background Sheet)"
+        >
+          📷 Export PNG
+        </button>
+        <button
+          class="io-action-btn"
+          (click)="exportFlowchartImage('svg')"
+          title="Export Flowchart as Transparent SVG (No Background Sheet)"
+        >
+          🖼️ Export SVG
+        </button>
+        <button
+          class="io-action-btn"
+          (click)="flowchartFileInput.click()"
+          title="Import Flowchart from exported PNG, SVG, or JSON"
+        >
+          📂 Import Graph
+        </button>
+        <input
+          #flowchartFileInput
+          type="file"
+          accept=".png,.svg,.json"
+          style="display: none"
+          (change)="onImportFlowchartFile($event)"
+        />
+        <div class="separator"></div>
+        <button
+          class="io-action-btn clear-canvas-btn"
+          (click)="clearCanvas()"
+          title="Clear entire canvas"
+        >
+          🗑️ Clear Canvas
+        </button>
+      </div>
     </div>
   </main>
 
@@ -424,13 +899,16 @@
           <label>State Type</label>
           <select [(ngModel)]="selectedNode.type" (change)="onNodeTypeChange(selectedNode)">
             <option value="STATE">State (Normal)</option>
+            <option value="AUTOMATIC">Automatic (Settings)</option>
+            <option value="MANUAL">Manual (Human)</option>
+            <option value="SUB_PROCESS">Sub-Process (+)</option>
+            <option value="DECISION">Decision (Rhombus)</option>
             <option value="FAILED_STATE">Failed State</option>
             <option value="JUNCTION">Junction</option>
-            <option value="DECISION">Decision</option>
             <option value="FORK">Fork</option>
             <option value="JOIN">Join</option>
-            <option value="START">Start</option>
-            <option value="END">End</option>
+            <option value="START">Start (Green Circle)</option>
+            <option value="END">End (Red Circle)</option>
           </select>
         </div>
 
@@ -439,24 +917,34 @@
           <input type="text" [(ngModel)]="selectedNode.label" placeholder="Enter node label..." />
         </div>
 
+        <div class="form-group">
+          <label>Attached Note / Annotation</label>
+          <textarea
+            rows="2"
+            [(ngModel)]="selectedNode.annotation"
+            placeholder="Add task note..."
+            class="inspector-textarea"
+          ></textarea>
+        </div>
+
         <!-- Dimensions -->
         <div class="form-row-2">
           <div class="form-group">
             <label>Width (px)</label>
-            <input type="number" [(ngModel)]="selectedNode.width" min="80" step="10" />
+            <input type="number" [(ngModel)]="selectedNode.width" min="60" step="10" />
           </div>
           <div class="form-group">
             <label>Height (px)</label>
-            <input type="number" [(ngModel)]="selectedNode.height" min="40" step="10" />
+            <input type="number" [(ngModel)]="selectedNode.height" min="60" step="10" />
           </div>
         </div>
 
-        <!-- Color presets -->
-        <div class="form-group">
+        <!-- Color presets (Locked for Start & End states per #2) -->
+        <div class="form-group" *ngIf="!isColorLocked(selectedNode)">
           <label>Theme Color</label>
           <div class="color-picker-presets">
             <button
-              *ngFor="let col of ['#e3f2fd', '#fee2e2', '#f1f5f9', '#fffbeb', '#f3e8ff', '#ecfdf5', '#ffedd5']"
+              *ngFor="let col of ['#e3f2fd', '#e0f2fe', '#f0f9ff', '#eef2ff', '#fee2e2', '#f1f5f9', '#fffbeb', '#f3e8ff']"
               [style.background-color]="col"
               class="color-preset-dot"
               [class.active]="selectedNode.color === col"
@@ -464,6 +952,17 @@
             ></button>
           </div>
           <input type="text" [(ngModel)]="selectedNode.color" class="hex-color-input" placeholder="#ffffff" />
+        </div>
+
+        <div class="form-group" *ngIf="isColorLocked(selectedNode)">
+          <label>Theme Color (Locked)</label>
+          <div class="locked-color-notice">
+            <span
+              class="locked-color-dot"
+              [style.background-color]="selectedNode.type === 'START' ? '#4ade80' : '#f87171'"
+            ></span>
+            <span>{{ selectedNode.type === 'START' ? 'Green (Fixed for Start)' : 'Red (Fixed for End)' }}</span>
+          </div>
         </div>
 
         <div class="action-footer">
@@ -514,6 +1013,23 @@
           </div>
         </div>
 
+        <!-- Edge Line Style Selector (#10: Normal, Dotted, Lined, Dotted & Lined) -->
+        <div class="form-group">
+          <label>Edge Line Style</label>
+          <div class="edge-style-selector">
+            <button
+              type="button"
+              *ngFor="let item of edgeLineStyles"
+              class="edge-style-btn"
+              [class.active]="(selectedEdge.lineStyle || 'solid') === item.style"
+              (click)="setEdgeLineStyle(selectedEdge, item.style)"
+            >
+              <span class="style-preview">{{ item.preview }}</span>
+              <span class="style-label">{{ item.label }}</span>
+            </button>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>Event Trigger (Name)</label>
           <input type="text" [(ngModel)]="selectedEdge.eventName" placeholder="e.g. GUARD, RETRY, ON_CLICK" />
@@ -556,11 +1072,93 @@
         </div>
       </div>
 
+      <!-- CONTAINER / GROUP BOX PROPERTIES SELECTED -->
+      <div class="inspector-card" *ngIf="selectedContainer && !selectedNode && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0">
+        <div class="card-header">
+          <h3>Group Box</h3>
+          <span class="badge badge-container">Container</span>
+        </div>
+
+        <div class="form-group">
+          <label>ID</label>
+          <input type="text" [value]="selectedContainer.id" disabled class="disabled-input" />
+        </div>
+
+        <div class="form-group">
+          <label>Group Label (Double click tag on canvas to edit)</label>
+          <input type="text" [(ngModel)]="selectedContainer.label" placeholder="Enter group label..." />
+        </div>
+
+        <!-- Dimensions -->
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Width (px)</label>
+            <input type="number" [(ngModel)]="selectedContainer.width" min="100" step="20" />
+          </div>
+          <div class="form-group">
+            <label>Height (px)</label>
+            <input type="number" [(ngModel)]="selectedContainer.height" min="100" step="20" />
+          </div>
+        </div>
+
+        <!-- Border Style -->
+        <div class="form-group">
+          <label>Border Style</label>
+          <div class="border-style-selector">
+            <button
+              type="button"
+              class="style-choice-btn"
+              [class.active]="(selectedContainer.borderStyle || 'dashed') === 'solid'"
+              (click)="selectedContainer.borderStyle = 'solid'"
+            >
+              Solid
+            </button>
+            <button
+              type="button"
+              class="style-choice-btn"
+              [class.active]="(selectedContainer.borderStyle || 'dashed') === 'dashed'"
+              (click)="selectedContainer.borderStyle = 'dashed'"
+            >
+              Dashed
+            </button>
+            <button
+              type="button"
+              class="style-choice-btn"
+              [class.active]="(selectedContainer.borderStyle || 'dashed') === 'dotted'"
+              (click)="selectedContainer.borderStyle = 'dotted'"
+            >
+              Dotted
+            </button>
+          </div>
+        </div>
+
+        <!-- Background Color presets -->
+        <div class="form-group">
+          <label>Background Tint</label>
+          <div class="color-picker-presets">
+            <button
+              *ngFor="let col of ['rgba(241, 245, 249, 0.45)', 'rgba(238, 242, 255, 0.45)', 'rgba(224, 242, 254, 0.45)', 'rgba(220, 252, 231, 0.45)', 'rgba(254, 243, 199, 0.45)', 'rgba(254, 226, 226, 0.45)', 'rgba(243, 232, 255, 0.45)', 'transparent']"
+              [style.background-color]="col === 'transparent' ? '#ffffff' : col"
+              class="color-preset-dot"
+              [class.active]="selectedContainer.color === col"
+              (click)="selectedContainer.color = col"
+              [title]="col"
+            ></button>
+          </div>
+        </div>
+
+        <div class="action-footer">
+          <button class="delete-btn" (click)="deleteContainer(selectedContainer.id)">
+            Delete Group Box
+          </button>
+        </div>
+      </div>
+
       <!-- EMPTY STATE (NOTHING SELECTED) -->
-      <div class="empty-inspector" *ngIf="!selectedNode && !selectedEdge && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0">
+      <div class="empty-inspector" *ngIf="!selectedNode && !selectedEdge && !selectedContainer && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0">
         <div class="empty-icon">🖱️</div>
         <h3>No Selection</h3>
-        <p>Select any node or connecting transition on the canvas to edit its properties.</p>
+        <p>Select any node, transition, or group container on the canvas to edit its properties.</p>
       </div>
     </div>
 
@@ -589,20 +1187,20 @@
         </div>
       </div>
 
-      <!-- Import/Export State -->
+      <!-- Import/Export State (#5: Clear JSON button; #6: Clear canvas moved to bottom toolbar) -->
       <div class="data-sync-card">
         <h3>Workspace JSON</h3>
         <p class="sync-desc">Backup your workflow or import an existing configuration.</p>
         <textarea
           class="json-textarea"
           [(ngModel)]="importExportText"
-          placeholder='{"nodes": [...], "edges": [...]}'
+          placeholder='{"nodes": [...], "edges": [...], "containers": [...]}'
         ></textarea>
         <div class="sync-actions">
           <button class="sync-btn export-btn" (click)="exportWorkflow()">Export</button>
           <button class="sync-btn import-btn" (click)="importWorkflow()">Import</button>
+          <button class="sync-btn clear-json-btn" (click)="clearWorkspaceJson()">Clear JSON</button>
         </div>
-        <button class="reset-canvas-btn" (click)="clearCanvas()">Clear Canvas</button>
       </div>
     </div>
   </aside>
